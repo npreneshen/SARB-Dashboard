@@ -5,8 +5,8 @@ A modernisation of a personal Excel based dashboard.
 Serves the complete public dataset. Companion to the SA CPI dashboard,
 built on the same pattern: one HTML file, one PowerShell updater, one data sidecar.
 
-**[Try it in your browser →](https://za-macro.pages.dev)**
->  If you'd like to setup your own versio see **[SETUP.md](SETUP.md)**
+**[Click here to try it in your browser →](https://za-macro.pages.dev)**
+>  If you'd like to setup your own version see **[SETUP.md](SETUP.md)**
 > Note: Every chart has a table view, CSV and PNG export. Tables export to CSV and rows with a series code click through to a history pop-up.
 
 ![Screenshot of Dashboard](screenshot.png)
