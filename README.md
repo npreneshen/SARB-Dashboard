@@ -6,8 +6,10 @@ Serves the complete public dataset. Companion to the SA CPI dashboard,
 built on the same pattern: one HTML file, one PowerShell updater, one data sidecar.
 
 **[Click here to try it in your browser →](https://za-macro.pages.dev)**
+> Every chart has a table view, CSV and PNG export. Tables export to CSV and rows with a series code click through to a history pop-up
 >  If you'd like to setup your own version see **[SETUP.md](SETUP.md)**
-> Note: Every chart has a table view, CSV and PNG export. Tables export to CSV and rows with a series code click through to a history pop-up.
+> Note: Intial load might take a few minutes if you've cloned the repo and are running it locally. Refresh the page once the powershell closes.
+
 
 ![Screenshot of Dashboard](screenshot.png)
 
