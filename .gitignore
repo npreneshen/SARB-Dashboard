@@ -1,0 +1,8 @@
+# The data sidecar is machine-generated and ~6 MB; regenerate with
+# Update-SARB-Data.ps1 rather than committing it.
+data/live-data.js
+data/*.tmp
+.deploy-stage/
+
+# wrangler's local cache/auth-token cache -- never publish this
+.wrangler/
