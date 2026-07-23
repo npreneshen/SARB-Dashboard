@@ -1,0 +1,3372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SARB Data Explorer — South African Reserve Bank statistics</title>
+<script>
+// Theme before first paint (light default) -- avoids a flash of the wrong theme.
+(function () {
+  try {
+    var t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("sarb_theme") || "light";
+    document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }
+})();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  /* FT-paper light theme, matching the SA CPI dashboard's surfaces */
+  --page: #FFF1E0;
+  --card: #FFF9F5;
+  --card-2: #FDF3EA;
+  --ink: #1A1A1A;
+  --ink-2: #5B4A3F;
+  --muted: #8C7A6B;
+  --grid: #F0DFC9;
+  --axis: #D9C3A5;
+  --border: rgba(26,26,26,0.10);
+  --accent: #0A6153;
+  --accent-ink: #FFFFFF;
+  --gold: #B98A2F;
+  /* categorical palette -- validated (dataviz six checks) on the FT paper surface */
+  --s1: #2a78d6; --s2: #1baf7a; --s3: #eda100; --s4: #4a3aa7; --s5: #e34948; --s6: #eb6834;
+  --good: #0b7a3c; --bad: #c22f2f; --warn: #a86a00;
+  --good-bg: rgba(11,122,60,0.12); --bad-bg: rgba(194,47,47,0.12);
+  --shadow: 0 1px 2px rgba(26,26,26,0.05), 0 4px 16px rgba(26,26,26,0.04);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --card: #1a1a19;
+  --card-2: #222220;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --accent: #2E8E7C;
+  --accent-ink: #08120F;
+  --gold: #CFa055;
+  /* dark palette -- validated for the dark surface, not an automatic flip */
+  --s1: #3987e5; --s2: #17a374; --s3: #bd8600; --s4: #9085e9; --s5: #e66767; --s6: #e06a3e;
+  --good: #35b06b; --bad: #e05f5f; --warn: #cf9a3f;
+  --good-bg: rgba(53,176,107,0.16); --bad-bg: rgba(224,95,95,0.16);
+  --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+h1, h2, h3 { line-height: 1.25; }
+a { color: var(--accent); }
+
+/* ---------- header ---------- */
+#topbar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 18px;
+  background: var(--card); border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.logo {
+  width: 38px; height: 38px; border-radius: 9px; flex: 0 0 auto;
+  background: var(--accent); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; letter-spacing: 0.5px;
+}
+.brand h1 { margin: 0; font-size: 17px; font-weight: 650; }
+.brand .sub { font-size: 12px; color: var(--muted); margin-top: -2px; }
+.statusarea { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge {
+  font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.badge.live .dot { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+.badge.off .dot { background: var(--warn); }
+.iconbtn {
+  border: 1px solid var(--border); background: var(--card-2); border-radius: 8px;
+  padding: 5px 11px; cursor: pointer; font-size: 13px; color: var(--ink-2);
+}
+.iconbtn:hover { background: var(--grid); }
+
+/* ---------- tabs ---------- */
+#tabs {
+  display: flex; gap: 2px; padding: 8px 14px 0; overflow-x: auto;
+  scrollbar-width: thin; position: sticky; top: 59px; z-index: 39;
+  background: var(--page);
+}
+#tabs button {
+  border: 1px solid transparent; border-bottom: none; background: transparent;
+  padding: 8px 14px 9px; cursor: pointer; white-space: nowrap;
+  font-size: 13.5px; font-weight: 600; color: var(--muted);
+  border-radius: 10px 10px 0 0;
+}
+#tabs button:hover { color: var(--ink); }
+#tabs button.on {
+  background: var(--card); color: var(--accent);
+  border-color: var(--border);
+  box-shadow: 0 -2px 8px rgba(20,32,28,0.04);
+}
+
+/* ---------- layout ---------- */
+#view { max-width: 1340px; margin: 0 auto; padding: 18px 16px 40px; }
+.intro { color: var(--ink-2); font-size: 13.5px; margin: 2px 2px 14px; max-width: 950px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); align-items: start; }
+.card {
+  grid-column: span 12; background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: var(--shadow); padding: 14px 16px 12px;
+  min-width: 0;
+  display: flex; flex-direction: column;
+}
+.card > .chartbox { flex: 1 1 auto; min-height: 0; }
+.card.half { grid-column: span 6; }
+.card.third { grid-column: span 4; }
+.card.twothird { grid-column: span 8; }
+@media (max-width: 980px) { .card.half, .card.third, .card.twothird { grid-column: span 12; } }
+.card h3 { margin: 0 0 2px; font-size: 15px; font-weight: 650; }
+.card .cardsub { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.cardhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cardhead .tools { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.note {
+  font-size: 12.5px; color: var(--ink-2); background: var(--card-2);
+  border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 0 8px 8px 0;
+  margin-top: 10px;
+}
+.note b { color: var(--ink); }
+.errnote { font-size: 13px; color: var(--muted); padding: 18px 6px; text-align: center; }
+
+/* ---------- stat tiles ---------- */
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 14px; }
+.tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow); padding: 12px 14px 10px; position: relative; overflow: hidden;
+  min-width: 0;
+}
+.tile .t-label { font-size: 12px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.tile .t-value { font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 1px 0 0; }
+.tile .t-value .unit { font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.tile .t-sub { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tile canvas { position: absolute; right: 8px; bottom: 6px; width: 86px; height: 30px; opacity: 0.9; }
+.chip { font-size: 11.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.chip.up { color: var(--bad); background: var(--bad-bg); }
+.chip.down { color: var(--good); background: var(--good-bg); }
+.chip.flat { color: var(--muted); background: var(--card-2); }
+.chip.good { color: var(--good); background: var(--good-bg); }
+.chip.bad { color: var(--bad); background: var(--bad-bg); }
+
+/* ---------- charts ---------- */
+.chartbox { position: relative; }
+.chartbox canvas { display: block; width: 100%; }
+.legend { display: flex; gap: 4px 14px; flex-wrap: wrap; margin: 6px 2px 0; }
+.legend .li {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12.5px; color: var(--ink-2); border: none; background: none; padding: 2px 0;
+}
+.legend .li .sw { width: 14px; height: 4px; border-radius: 2px; }
+.legend .li.offed { opacity: 0.38; }
+.legend .ax {
+  font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--axis); background: var(--card-2); color: var(--muted); line-height: 15px;
+}
+.legend .ax.r { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+tr.plotrow { cursor: pointer; }
+tr.plotrow:hover td { background: var(--card-2); }
+details.dormant { margin-top: 10px; font-size: 13px; }
+details.dormant summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.stale { font-size: 11px; color: var(--warn); font-weight: 700; }
+.rangebtns { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.rangebtns button {
+  border: none; background: var(--card-2); padding: 3px 9px; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+}
+.rangebtns button + button { border-left: 1px solid var(--border); }
+.rangebtns button.on { background: var(--accent); color: var(--accent-ink); }
+/* applied by equalizeGridRows() to the content region of a card that's
+   been capped to match a taller chart card in the same grid row */
+.rowfill { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; max-height: none !important; }
+.minibtn {
+  border: 1px solid var(--border); background: var(--card-2); border-radius: 8px;
+  padding: 3px 9px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted);
+}
+.minibtn:hover { color: var(--ink); }
+.minibtn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#tooltip {
+  position: fixed; z-index: 90; pointer-events: none; display: none;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 8px 11px; font-size: 12.5px; max-width: 320px;
+}
+#tooltip .tt-t { font-weight: 700; margin-bottom: 3px; }
+#tooltip .tt-r { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+#tooltip .tt-r .nm { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; max-width: 210px; }
+#tooltip .tt-r .sw { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+#tooltip .tt-r .v { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; padding-left: 12px; }
+
+/* ---------- tables ---------- */
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th {
+  text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--axis);
+  position: sticky; top: 0; background: var(--card);
+}
+table.data td { padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+table.data td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data th.num { text-align: right; }
+table.data tr.sec td {
+  font-weight: 700; color: var(--accent); padding-top: 12px; font-size: 12.5px;
+  text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--axis);
+}
+.scrollwrap { overflow-x: auto; max-width: 100%; }
+.scrollwrap.tall { max-height: 430px; overflow-y: auto; }
+
+/* ---------- explorer ---------- */
+.explorer { display: grid; grid-template-columns: 330px 1fr; gap: 14px; }
+@media (max-width: 980px) { .explorer { grid-template-columns: 1fr; } }
+.exlist {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow); padding: 10px; max-height: 76vh; overflow-y: auto;
+}
+.exlist input[type=search] {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--axis); border-radius: 8px;
+  background: var(--card-2); color: var(--ink); font: inherit; font-size: 13.5px; margin-bottom: 8px;
+}
+.exgroup { font-size: 11.5px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.4px; margin: 10px 4px 2px; }
+.excat { font-size: 12px; font-weight: 650; color: var(--muted); margin: 6px 4px 1px; }
+.exitem {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  padding: 4px 6px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink-2);
+}
+.exitem:hover { background: var(--card-2); color: var(--ink); }
+.exitem.on { background: var(--good-bg); color: var(--ink); font-weight: 600; }
+.exitem .code { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
+.freqtag {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--accent); background: var(--good-bg); border-radius: 4px; padding: 1px 5px;
+  margin-left: 3px; white-space: nowrap;
+}
+.selchips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.selchip {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--card-2); border-radius: 999px; padding: 3px 10px;
+}
+.selchip .sw { width: 10px; height: 10px; border-radius: 3px; }
+.selchip button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 0 0 0 2px; line-height: 1; }
+.selchip button:hover { color: var(--bad); }
+
+/* ---------- modal ---------- */
+#modalwrap {
+  position: fixed; inset: 0; z-index: 100; display: none;
+  background: rgba(10,16,14,0.55); align-items: center; justify-content: center; padding: 20px;
+}
+#modalwrap.open { display: flex; }
+#modal {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow); max-width: 900px; width: 100%; max-height: 86vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#modal .m-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+#modal .m-head h3 { margin: 0; font-size: 15.5px; }
+#modal .m-head button { margin-left: auto; }
+#modal .m-body { padding: 10px 18px 16px; overflow: auto; font-size: 13.5px; }
+#modal .m-body h4 { margin: 14px 0 4px; font-size: 13.5px; color: var(--accent); }
+
+/* announcements */
+.annc { border-bottom: 1px solid var(--grid); padding: 7px 2px; font-size: 13px; }
+.annc .d { font-size: 11.5px; color: var(--muted); font-weight: 650; }
+.annc:last-child { border-bottom: none; }
+
+footer {
+  max-width: 1340px; margin: 0 auto; padding: 8px 18px 26px;
+  font-size: 12px; color: var(--muted);
+}
+footer a { color: var(--muted); }
+html, body { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 640px) {
+  .tile .t-value { font-size: 22px; }
+  #view { padding: 12px 8px 30px; }
+  .card { padding: 12px 12px 10px; }
+  .brand .sub { display: none; }
+  .brand h1 { font-size: 15px; }
+  #topbar { padding: 8px 10px; gap: 8px; }
+  .iconbtn { padding: 4px 8px; font-size: 12px; }
+  .badge { font-size: 11px; padding: 3px 8px; }
+  #tabs { position: static; padding: 6px 6px 0; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .tile canvas { width: 64px; height: 24px; }
+  .cardhead { gap: 6px; }
+  .cardhead .tools { margin-left: 0; width: 100%; }
+  .rangebtns button, .minibtn { padding: 3px 7px; font-size: 11px; }
+  .legend { gap: 3px 10px; }
+  .exlist { max-height: 44vh; }
+  #modal { max-height: 92vh; }
+  #modal .m-body { padding: 8px 10px 12px; }
+  table.data { font-size: 12px; }
+  table.data td, table.data th { padding: 4px 6px; }
+}
+</style>
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">
+    <div class="logo">SARB</div>
+    <div>
+      <h1>SARB Data Explorer</h1>
+      <div class="sub">South African Reserve Bank — official statistics, charted &amp; analysed</div>
+    </div>
+  </div>
+  <div class="statusarea">
+    <span id="liveBadge" class="badge"><span class="dot"></span><span id="liveTxt">loading…</span></span>
+    <button id="themeBtn" class="iconbtn" title="Toggle light/dark">◐ Theme</button>
+    <button id="aboutBtn" class="iconbtn">About &amp; sources</button>
+  </div>
+</header>
+<nav id="tabs"></nav>
+<main id="view"></main>
+<footer>
+  Data © South African Reserve Bank, served live from the SARB Web API (custom.resbank.co.za/SarbWebApi).
+  This is an independent, unofficial viewer — not affiliated with or endorsed by the SARB. Informational only;
+  nothing here is financial advice. Figures can be revised by the source after first publication.
+</footer>
+<div id="tooltip"></div>
+<div id="modalwrap"><div id="modal">
+  <div class="m-head"><h3 id="m-title"></h3><button class="iconbtn" onclick="closeModal()">✕ Close</button></div>
+  <div class="m-body" id="m-body"></div>
+</div></div>
+<script src="data/live-data.js"></script>
+
+<script>
+"use strict";
+/* =====================================================================
+   SARB Data Explorer -- single-file dashboard over the SARB Web API.
+   Data layers, newest wins:
+     1. data/live-data.js sidecar written by Update-SARB-Data.ps1
+        (window.SARB_LIVE) -- full offline archive back to 1960.
+     2. Live fetches straight from the API (it sends
+        Access-Control-Allow-Origin: *, so this works even from file://).
+   ===================================================================== */
+
+const API = "https://custom.resbank.co.za/SarbWebApi";
+// Optional Cloudflare Worker (see cloudflare/README.md) that keeps the KBP
+// catalogue (the ~2,320-code Quarterly Bulletin gap-fill series, behind an
+// endpoint with no CORS header) topped up on its own schedule, independent
+// of anyone running Update-SARB-Data.ps1 locally. Empty by default -- a true
+// no-op until an actual Worker URL is deployed and set here.
+const KBP_WORKER_URL = "https://sarb-kbp-updater.n-preneshen.workers.dev";
+const $ = (s, r) => (r || document).querySelector(s);
+const PAL = ["--s1","--s2","--s3","--s4","--s5","--s6"];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/* ---------- small utils ---------- */
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+// Source names sometimes carry literal "&nbsp;" entities and NBSP padding
+// (indentation in the SARB's own tables) -- strip to plain single spaces.
+function cleanName(s) {
+  // Some SARB description fields carry literal HTML (e.g. "M3 <br/>
+  // 12-Term % change") -- since names/descriptions are always rendered
+  // through esc() for safety, that markup would otherwise appear as
+  // literal "<br/>" text rather than a line break.
+  return String(s == null ? "" : s).replace(/<br\s*\/?>/gi, " — ").replace(/&nbsp;?/gi, " ").replace(/[   ]/g, " ").replace(/\s+/g, " ").trim();
+}
+// Values may arrive as South African locale strings: comma decimal
+// separator, non-breaking-space thousands separator.
+function toF(x) {
+  if (x == null || x === "") return null;
+  if (typeof x === "number") return isFinite(x) ? x : null;
+  const s = String(x).replace(/[    ]/g, "").replace(",", ".");
+  const f = parseFloat(s);
+  return isFinite(f) ? f : null;
+}
+// Period string -> epoch ms. "YYYY-MM-DD" daily, "YYYY-MM" monthly (mid-month).
+function pt(p) {
+  if (p.length >= 10) return Date.UTC(+p.slice(0,4), +p.slice(5,7)-1, +p.slice(8,10));
+  return Date.UTC(+p.slice(0,4), +p.slice(5,7)-1, 15);
+}
+function plabel(p) {
+  if (p.length >= 10) return `${+p.slice(8,10)} ${MONTHS[+p.slice(5,7)-1]} ${p.slice(0,4)}`;
+  return `${MONTHS[+p.slice(5,7)-1]} ${p.slice(0,4)}`;
+}
+function monthShift(p, n) { // "YYYY-MM" +- n months
+  let y = +p.slice(0,4), m = +p.slice(5,7) - 1 + n;
+  y += Math.floor(m/12); m = ((m%12)+12)%12;
+  return `${y}-${String(m+1).padStart(2,"0")}`;
+}
+function decimalsOf(fmt) {
+  if (!fmt) return 2;
+  const i = fmt.indexOf(".");
+  return i < 0 ? 0 : fmt.length - i - 1;
+}
+function fmtV(v, fmt) {
+  if (v == null || !isFinite(v)) return "–";
+  let d = decimalsOf(fmt);
+  if (fmt == null) d = Math.abs(v) >= 1000 ? 0 : Math.abs(v) >= 10 ? 2 : 3;
+  const s = Math.abs(v).toFixed(d);
+  const [int, frac] = s.split(".");
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return (v < 0 ? "−" : "") + grouped + (frac ? "." + frac : "");
+}
+function fmtPct(v, d) { return v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d == null ? 1 : d) + "%"; }
+function lastObs(obs) { return obs && obs.length ? obs[obs.length-1] : null; }
+function obsAtOrBefore(obs, t) { // binary search by pt()
+  let lo = 0, hi = obs.length - 1, ans = null;
+  while (lo <= hi) { const mid = (lo+hi) >> 1; if (pt(obs[mid][0]) <= t) { ans = obs[mid]; lo = mid+1; } else hi = mid-1; }
+  return ans;
+}
+function todayUTC() { const n = new Date(); return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()); }
+const YEAR = 365.25 * 86400e3;
+
+/* ---------- transforms ---------- */
+function yoyFromLevels(obs) { // monthly or quarterly "YYYY-MM" levels -> 12-month % change
+  const map = new Map(obs.map(o => [o[0], o[1]]));
+  const out = [];
+  for (const [p, v] of obs) {
+    const prev = map.get(monthShift(p, -12));
+    if (prev != null && prev !== 0 && v != null) out.push([p, (v/prev - 1) * 100]);
+  }
+  return out;
+}
+function momFromLevels(obs, gap) {
+  const map = new Map(obs.map(o => [o[0], o[1]]));
+  const out = [];
+  for (const [p, v] of obs) {
+    const prev = map.get(monthShift(p, -(gap||1)));
+    if (prev != null && prev !== 0 && v != null) out.push([p, (v/prev - 1) * 100]);
+  }
+  return out;
+}
+function roll12Sum(obs) { // 12-month rolling sum of monthly flows
+  const map = new Map(obs.map(o => [o[0], o[1]]));
+  const out = [];
+  for (const [p] of obs) {
+    let s = 0, n = 0;
+    for (let k = 0; k < 12; k++) { const v = map.get(monthShift(p, -k)); if (v != null) { s += v; n++; } }
+    if (n === 12) out.push([p, s]);
+  }
+  return out;
+}
+function index100(obs, fromT) {
+  let base = null;
+  const out = [];
+  for (const [p, v] of obs) {
+    const t = pt(p);
+    if (fromT != null && t < fromT) continue;
+    if (base == null) { if (v == null || v === 0) continue; base = v; }
+    out.push([p, v / base * 100]);
+  }
+  return out;
+}
+function monthEndSeries(obsDaily) { // last daily value in each month -> "YYYY-MM"
+  const out = [];
+  let curM = null, curV = null;
+  for (const [p, v] of obsDaily) {
+    const m = p.slice(0, 7);
+    if (curM !== null && m !== curM) out.push([curM, curV]);
+    curM = m; curV = v;
+  }
+  if (curM !== null) out.push([curM, curV]);
+  return out;
+}
+function rollingVol(obsDaily, win) { // annualised stdev of daily log returns, %
+  win = win || 30;
+  const out = [], rets = [];
+  for (let i = 1; i < obsDaily.length; i++) {
+    const a = obsDaily[i-1][1], b = obsDaily[i][1];
+    if (a > 0 && b > 0) rets.push([obsDaily[i][0], Math.log(b/a)]);
+  }
+  for (let i = win; i < rets.length; i++) {
+    let m = 0; for (let k = i-win+1; k <= i; k++) m += rets[k][1];
+    m /= win;
+    let s2 = 0; for (let k = i-win+1; k <= i; k++) s2 += (rets[k][1]-m)*(rets[k][1]-m);
+    out.push([rets[i][0], Math.sqrt(s2/(win-1)) * Math.sqrt(252) * 100]);
+  }
+  return out;
+}
+function stepExtend(changes) { // rate-change points -> step series extended to today
+  if (!changes || !changes.length) return [];
+  const out = changes.slice();
+  const t = new Date(todayUTC());
+  const tp = `${t.getUTCFullYear()}-${String(t.getUTCMonth()+1).padStart(2,"0")}-${String(t.getUTCDate()).padStart(2,"0")}`;
+  if (out[out.length-1][0] < tp) out.push([tp, out[out.length-1][1]]);
+  return out;
+}
+function spreadSeries(aObs, bObs) { // a - b sampled on a's dates (b step-held)
+  const out = [];
+  for (const [p, v] of aObs) {
+    const b = obsAtOrBefore(bObs, pt(p));
+    if (b && v != null && b[1] != null) out.push([p, v - b[1]]);
+  }
+  return out;
+}
+
+/* ---------- data ---------- */
+let D = (typeof window.SARB_LIVE === "object" && window.SARB_LIVE) ? window.SARB_LIVE : null;
+let DATA_MODE = D ? "sidecar" : "none";
+let LIVE_OK = false;
+if (D) { D.monthly = D.monthly || {}; D.daily = D.daily || {}; D.graphs = D.graphs || {}; }
+else D = { home:null, market:null, cpd:null, fxDaily:null, fxMonthly:null, other:null,
+           rateChanges:null, releases:null, monthly:{}, graphs:{}, daily:{}, sdds:null, mcm:null };
+
+// One-time cleanup of names held in the sidecar (nbsp entities etc.).
+function normalizeData() {
+  const cn = cleanName;
+  for (const k of ["home","market","cpd","fxDaily","fxMonthly"]) if (D[k])
+    for (const r of D[k]) { r.name = cn(r.name); r.section = cn(r.section); }
+  if (D.other) for (const r of D.other) { r.name = cn(r.name); r.desc = cn(r.desc); r.section = cn(r.section); }
+  if (D.rateChanges) for (const r of D.rateChanges) r.name = cn(r.name);
+  for (const dt of Object.keys(D.monthly || {})) for (const s of D.monthly[dt] || [])
+    { s.name = cn(s.name); s.catName = cn(s.catName); s.desc = cn(s.desc); s.sub = cn(s.sub); }
+  for (const c of Object.keys(D.daily || {})) { const s = D.daily[c]; s.name = cn(s.name); s.desc = cn(s.desc); }
+  for (const gk of Object.keys(D.graphs || {})) for (const n of Object.keys(D.graphs[gk] || {}))
+    for (const s of D.graphs[gk][n] || []) { s.name = cn(s.name); s.desc = cn(s.desc); }
+  if (D.sdds) for (const k of ["real","financial","external","fiscal","population"]) if (D.sdds[k]) {
+    for (const r of D.sdds[k]) { r.name = cn(r.name); r.section = cn(r.section); if (r.unit) r.unit = cn(r.unit); }
+    // Older sidecars (pre-dating the SDDS dedupe fix) may still hold both
+    // periods per indicator code -- collapse to the latest here too, so a
+    // stale live-data.js self-heals without needing the updater re-run.
+    D.sdds[k] = dedupeMeasures(D.sdds[k]);
+  }
+  if (D.mcm && D.mcm.categories) for (const c of D.mcm.categories) c.description = cn(c.description);
+  // KBP "Quarterly Bulletin" gap-fill series (credit card activity, bond
+  // yield maturity buckets) come from a separate download-facility fetch
+  // and are stored under D.kbp -- merge into the same D.daily lookup dict
+  // every other series lives in (obs are already "YYYY-MM", matching the
+  // convention already used there for other monthly series like CPI1000F)
+  // so Explorer, click-through history, and the yield curve can all treat
+  // them the same as everything else with no special-casing.
+  if (D.kbp) for (const code of Object.keys(D.kbp)) {
+    const s = D.kbp[code];
+    s.name = cn(s.name);
+    if (!D.daily[code]) D.daily[code] = s;
+  }
+}
+normalizeData();
+// Coarse frequency inference from the observation date spacing, used only
+// for the Explorer's frequency badge (display, not behaviour -- transforms
+// already handle mixed cadences fine via date-based lookups).
+function inferFreq(obs) {
+  if (!obs || obs.length < 2) return "";
+  const n = Math.min(obs.length - 1, 12);
+  let sumDays = 0;
+  for (let i = obs.length - n; i < obs.length; i++) sumDays += (pt(obs[i][0]) - pt(obs[i-1][0])) / 86400e3;
+  const avg = sumDays / n;
+  // A day-stamped ("YYYY-MM-DD") series isn't necessarily Daily -- some KBP
+  // catalogue codes carry a real calendar day even at weekly cadence (e.g.
+  // always a Friday), so the actual gap between prints still decides it.
+  if (obs[0][0].length >= 10) {
+    if (avg < 4) return "Daily";
+    if (avg < 10) return "Weekly";
+  }
+  if (avg < 45) return "Monthly";
+  if (avg < 135) return "Quarterly";
+  return "Annual";
+}
+
+const RELEASE_NAMES = {
+  MRDMA:"Money and banking", MRDBM:"Banks and mutual banks", MRDIE:"International economic data",
+  MRDFG:"National government finance", MRDCM:"Capital market", MRDEI:"Economic indicators (seasonally adjusted)",
+  CDACSQ:"Credit detail (quarterly)", CDACSM:"Credit detail (monthly)", CDASA:"Seasonally adjusted credit aggregates",
+  CDADS:"Deposit detail", CDACA:"Securitisation", CDACM3:"Counterparts of M3 (levels)"
+};
+
+async function jget(url, timeoutMs) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 25000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+/* JS mirrors of the updater's compactors (for live fetches). */
+function cSnapshot(rows) {
+  return rows.map(r => ({ name:cleanName(r.Name), section:cleanName(r.SectionName), sectionId:r.SectionId, code:r.TimeseriesCode,
+    date:r.Date, value:toF(r.Value), upDown:r.UpDown|0, fmt:r.FormatNumber, fmtDate:r.FormatDate }));
+}
+// The EconFinDataForSA (SDDS) endpoints return two rows per indicator code
+// -- the prior period and the latest -- so the SARB's own site can show a
+// period change. We only want the latest row per code; compute the change
+// ourselves from the two periods since the API's own PercChange is usually
+// blank.
+function cMeasures(rows) {
+  const mapped = rows.map(r => ({ section:cleanName(r.SectionName), sectionId:r.SectionId, code:r.TsCode, name:cleanName(r.MeasureName),
+    value:toF(r.TheValue), date:(r.ValueDate||"").slice(0,10), desc:cleanName(r.Description),
+    fmt:r.FormatNumber, fmtDate:r.FormatDate, unit:(r.UnitOfMeasure||"").trim() || undefined,
+    chg:toF(r.PercChange), secSeq:r.SectionSequence, itemSeq:r.ItemSequence }));
+  const byKey = new Map();
+  for (const rec of mapped) {
+    const key = rec.section + "|" + rec.code + "|" + rec.name;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(rec);
+  }
+  const out = [];
+  for (const group of byKey.values()) {
+    group.sort((a, b) => (a.date || "") < (b.date || "") ? -1 : 1);
+    const latest = group[group.length - 1];
+    if (group.length > 1 && latest.chg == null) {
+      const prev = group[group.length - 2];
+      if (prev.value != null && prev.value !== 0 && latest.value != null) latest.chg = (latest.value / prev.value - 1) * 100;
+    }
+    out.push(latest);
+  }
+  return out;
+}
+// Defensive dedupe for arrays that may already have been loaded from an
+// older sidecar file (pre-dating this fix) with duplicate period rows.
+function dedupeMeasures(arr) {
+  if (!arr || !arr.length) return arr;
+  const byKey = new Map();
+  for (const rec of arr) {
+    const key = (rec.section || "") + "|" + (rec.code || "") + "|" + (rec.name || "");
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(rec);
+  }
+  const out = [];
+  for (const group of byKey.values()) {
+    if (group.length === 1) { out.push(group[0]); continue; }
+    group.sort((a, b) => (a.date || "") < (b.date || "") ? -1 : 1);
+    const latest = group[group.length - 1];
+    if (latest.chg == null) {
+      const prev = group[group.length - 2];
+      if (prev.value != null && prev.value !== 0 && latest.value != null) latest.chg = (latest.value / prev.value - 1) * 100;
+    }
+    out.push(latest);
+  }
+  return out;
+}
+function pMon(p) { const m = /^(\d{4})[-\/](\d{2})/.exec(p); return m ? m[1]+"-"+m[2] : null; }
+function pDayS(p) { const m = /^(\d{4})[-\/](\d{2})[-\/](\d{2})/.exec(p); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
+function cObs(rows, daily) {
+  if (!rows || !rows.length) return null;
+  const seen = new Set(), obs = [];
+  for (const r of rows) {
+    const p = daily ? pDayS(r.Period) : pMon(r.Period);
+    const v = toF(r.Value);
+    if (p && v != null && !seen.has(p)) { seen.add(p); obs.push([p, v]); }
+  }
+  obs.sort((a,b) => a[0] < b[0] ? -1 : 1);
+  return { name: cleanName(rows[0].Timeseries), desc: cleanName(rows[0].Description), fmt: rows[0].FormatNumber, obs };
+}
+function cRelease(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const code = r.TimeSeriesCode; if (!code) continue;
+    const key = r.CategoryCode + "|" + code;
+    let s = by.get(key);
+    if (!s) { s = { code, cat:r.CategoryCode, catName:cleanName(r.CategoryName), name:cleanName(r.MeasureName), sub:cleanName(r.SubTitle),
+      desc:cleanName(r.Description), fmt:r.FormatNumber, fmtDate:r.FormatDate, obs:[] }; by.set(key, s); }
+    const p = pMon(r.Period), v = toF(r.Value);
+    if (p && v != null) s.obs.push([p, v]);
+  }
+  const out = [...by.values()];
+  for (const s of out) s.obs.sort((a,b) => a[0] < b[0] ? -1 : 1);
+  return out;
+}
+function cGraph(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const code = r.TimeseriesCode; if (!code) continue;
+    let s = by.get(code);
+    if (!s) { s = { code, name:cleanName(r.Name), desc:cleanName((r.Description||"").replace(/<br\s*\/?>/g," — ")),
+      fmt:r.FormatNumber, seq:r.Sequence|0, obs:[] }; by.set(code, s); }
+    const p = pMon(r.Period), v = toF(r.Value);
+    if (p && v != null) s.obs.push([p, v]);
+  }
+  const out = [...by.values()].sort((a,b) => a.seq - b.seq);
+  for (const s of out) s.obs.sort((a,b) => a[0] < b[0] ? -1 : 1);
+  return out;
+}
+
+/* Live refresh of the cheap snapshots + recent tail of key daily series. */
+async function liteRefresh() {
+  const jobs = [
+    jget(`${API}/WebIndicators/HomePageRates`).then(r => { D.home = cSnapshot(r); }),
+    jget(`${API}/WebIndicators/CurrentMarketRates`).then(r => { D.market = cSnapshot(r); }),
+    jget(`${API}/WebIndicators/CPDRates`).then(r => { D.cpd = cSnapshot(r); }),
+    jget(`${API}/WebIndicators/HistoricalExchangeRatesDaily`).then(r => { D.fxDaily = cSnapshot(r); }),
+    jget(`${API}/WebIndicators/HistoricalExchangeRatesMonthly`).then(r => { D.fxMonthly = cSnapshot(r); }),
+    jget(`${API}/WebIndicators/OtherIndicators`).then(r => { D.other = cMeasures(r); }),
+    jget(`${API}/WebIndicators/ReleaseOfSelectedData`).then(r => {
+      D.releases = r;
+      // Self-heal: if the SARB has published newer data than the bundled
+      // archive holds, quietly re-fetch those archives live. This keeps a
+      // deployed copy current with zero servers -- no Worker, no cron.
+      const stamp = D.releaseStamp || {};
+      for (const rr of r) {
+        const dt = rr.DataType;
+        if (D.monthly[dt] && stamp[dt] && rr.LastPeriod && rr.LastPeriod > stamp[dt]) {
+          delete D.monthly[dt];
+          ensureArchive(dt).then(() => { stamp[dt] = rr.LastPeriod; if (charts.length) openTab(currentTab); }).catch(() => {});
+        }
+      }
+    }),
+    // Desk notices (MCM) previously only got fetched live in the no-sidecar
+    // cold-boot path -- meaning a deployed copy (which always ships WITH a
+    // sidecar) never refreshed them at all and just showed whatever was
+    // baked in at the last deploy, however old. Every page load refreshes
+    // these now, same as the rates boards above.
+    jget(`${API}/MCM/Categories`).then(async cats => {
+      const mcm = { categories: cats.map(c => ({ id: c.id, description: cleanName(c.description), lastupdate: (c.lastupdate||"").trim(), sequence: c.sequence|0 })), contributions: {} };
+      await Promise.allSettled(mcm.categories.map(async c => { mcm.contributions[c.id] = await jget(`${API}/MCM/Contributions/${c.id}`); }));
+      D.mcm = mcm;
+    }),
+    // KBP catalogue self-heal: the Worker tops itself up on its own Cron
+    // schedule regardless of whether anyone's local PC is on. This just
+    // checks its lightweight status stamp first (cheap) and only pulls the
+    // full dataset (a few MB) when it's actually newer than what's baked
+    // into this deploy's own sidecar -- same pattern as the release-register
+    // check above, just pointed at a source outside the main SARB API.
+    (KBP_WORKER_URL ? jget(`${KBP_WORKER_URL}/kbp-status`).then(status => {
+      const stamp = D.kbpStamp || null;
+      if (!status || !status.updatedAt || (stamp && status.updatedAt <= stamp)) return;
+      return jget(`${KBP_WORKER_URL}/kbp-data`, 45000).then(fresh => {
+        if (!fresh) return;
+        D.kbp = D.kbp || {};
+        for (const code of Object.keys(fresh)) {
+          const s = fresh[code];
+          s.name = cleanName(s.name);
+          D.kbp[code] = s;
+          D.daily[code] = s;
+        }
+        D.kbpStamp = status.updatedAt;
+        if (typeof catalog === "function") catalog._c = null;
+        if (charts.length) openTab(currentTab);
+      });
+    }) : Promise.resolve()),
+  ];
+  const res = await Promise.allSettled(jobs);
+  LIVE_OK = res.some(r => r.status === "fulfilled");
+  if (LIVE_OK) {
+    // top up the daily series the overview leans on
+    const tails = ["MMRD002A","MMRD851A","MMRD855A","MMRD853A","EXCX135D","EXCZ001D","EXCZ002D","EER4504A"]
+      .filter(c => D.daily[c] && D.daily[c].obs.length);
+    await Promise.allSettled(tails.map(c => tailFetch(c)));
+  }
+  setBadge();
+  return LIVE_OK;
+}
+async function tailFetch(code) {
+  const s = D.daily[code];
+  const last = lastObs(s.obs)[0];
+  const from = new Date(pt(last) - 12 * 86400e3).toISOString().slice(0,10);
+  const to = new Date(todayUTC()).toISOString().slice(0,10);
+  const rows = await jget(`${API}/WebIndicators/Shared/GetTimeseriesObservations/${code}/${from}/${to}`);
+  const fresh = cObs(rows, true);
+  if (!fresh || !fresh.obs.length) return;
+  const cut = fresh.obs[0][0];
+  s.obs = s.obs.filter(o => o[0] < cut).concat(fresh.obs);
+}
+/* Deep-history fetch for any code, used when the sidecar is absent. */
+async function ensureDeep(code, fromYear, daily) {
+  if (D.daily[code] && D.daily[code].obs.length > 50) return D.daily[code];
+  const to = new Date(todayUTC()).toISOString().slice(0,10);
+  const rows = await jget(`${API}/WebIndicators/Shared/GetTimeseriesObservations/${code}/${fromYear || 1980}-01-01/${to}`, 60000);
+  const s = cObs(rows, daily !== false);
+  if (s) D.daily[code] = s;
+  return s;
+}
+/* On-demand archive fetch (the 1960 statistical releases, up to ~12 MB). */
+const archiveJobs = {};
+function ensureArchive(dt) {
+  if (D.monthly[dt]) return Promise.resolve(D.monthly[dt]);
+  if (!archiveJobs[dt]) {
+    archiveJobs[dt] = jget(`${API}/WebIndicators/ReleaseOfSelectedData/MonthlyIndicatorsAll/${dt}`, 180000)
+      .then(rows => { D.monthly[dt] = cRelease(rows); return D.monthly[dt]; })
+      .catch(e => { delete archiveJobs[dt]; throw e; });
+  }
+  return archiveJobs[dt];
+}
+const graphJobs = {};
+function ensureGraphs(gk, ep) {
+  if (D.graphs[gk]) return Promise.resolve(D.graphs[gk]);
+  if (!graphJobs[gk]) {
+    graphJobs[gk] = (async () => {
+      const out = {};
+      for (let n = 1; n <= 8; n++) {
+        try {
+          const rows = await jget(`${API}/WebIndicators/ReleaseOfSelectedData/${ep}/${n}`);
+          if (!rows || !rows.length) break;
+          out[n] = cGraph(rows);
+        } catch (e) { break; }
+      }
+      if (Object.keys(out).length) D.graphs[gk] = out;
+      return D.graphs[gk];
+    })().catch(e => { delete graphJobs[gk]; throw e; });
+  }
+  return graphJobs[gk];
+}
+
+/* series lookups */
+function daily(code) { return D.daily && D.daily[code] ? D.daily[code].obs : null; }
+function archiveSeries(dt) { return D.monthly && D.monthly[dt] ? D.monthly[dt] : null; }
+function findSeries(dt, rx) {
+  const list = archiveSeries(dt);
+  if (!list) return null;
+  return list.find(s => rx.test(s.name)) || null;
+}
+function homeVal(code) { return D.home ? D.home.find(r => r.code === code) : null; }
+
+/* ---------- badge / theme ---------- */
+function setBadge() {
+  const b = $("#liveBadge"), t = $("#liveTxt");
+  if (LIVE_OK) {
+    b.className = "badge live";
+    const n = new Date();
+    t.textContent = `Live · refreshed ${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`;
+  } else if (DATA_MODE === "sidecar") {
+    b.className = "badge off";
+    t.textContent = `Offline · archive of ${(D.fetchedAt || "").slice(0,10) || "unknown date"}`;
+  } else {
+    b.className = "badge off";
+    t.textContent = "No data — connect once or run Update-SARB-Data.ps1";
+  }
+}
+
+/* =====================================================================
+   Chart engine -- plain canvas, no libraries.
+   ===================================================================== */
+const charts = [];
+class Chart {
+  /* mount: element. cfg: { series:[{name, obs, color?, step?, dash?, fill?, width?, axis?("L"|"R")}],
+     fmt, unit, ranges, defRange, logToggle, zeroLine, band:{y0,y1}, height, note,
+     dualAuto (split scales automatically when magnitudes differ wildly),
+     viewToggle:{def:"lvl"|"yoy"} (Level / 12-month % change switch) } */
+  constructor(mount, cfg) {
+    this.cfg = cfg;
+    this.series = cfg.series.map((s, i) => {
+      const o = Object.assign({ color: css(PAL[i % PAL.length]), on: true }, s);
+      if (i >= PAL.length && o.dash == null) o.dash = true; // 7th+ series: same hues, dashed
+      o.axisManual = !!o.axis;
+      o.axis = o.axis || "L";
+      o.baseObs = o.obs;
+      return o;
+    });
+    if (cfg.style === "area") for (const s of this.series) s.fill = true;
+    this.view = cfg.viewToggle ? (cfg.viewToggle.def || "lvl") : "lvl";
+    this.log = false;
+    this.mount = mount;
+    this.box = el("div", "chartbox");
+    this.canvas = document.createElement("canvas");
+    this.canvas.height = cfg.height || 260;
+    this.box.appendChild(this.canvas);
+    mount.appendChild(this.box);
+    const tools = cfg.toolsEl;
+    if (tools) {
+      if (cfg.viewToggle) {
+        this.viewEl = el("span", "rangebtns");
+        for (const [v, lab] of [["lvl","Level"],["yoy","YoY %"]]) {
+          const b = el("button", null, lab);
+          b.onclick = () => { this.view = v; this.applyView(); this.draw();
+            [...this.viewEl.children].forEach(x => x.classList.toggle("on", x.textContent === lab)); };
+          if (v === this.view) b.classList.add("on");
+          this.viewEl.appendChild(b);
+        }
+        tools.appendChild(this.viewEl);
+      }
+      const spans = this.spanYears();
+      const avail = (cfg.ranges || ["1Y","3Y","5Y","10Y","MAX"]).filter(r => r === "MAX" || parseInt(r) < spans + 1);
+      if (avail.length > 1) {
+        this.rangeEl = el("span", "rangebtns");
+        for (const r of avail) {
+          const b = el("button", null, r);
+          b.onclick = () => { this.setRange(r); };
+          this.rangeEl.appendChild(b);
+        }
+        tools.appendChild(this.rangeEl);
+      }
+      if (cfg.logToggle) {
+        const lb = el("button", "minibtn", "log");
+        lb.title = "Logarithmic scale";
+        lb.onclick = () => { this.log = !this.log; lb.classList.toggle("on", this.log); this.draw(); };
+        tools.appendChild(lb);
+      }
+      const tb = el("button", "minibtn", "⊞ table");
+      tb.onclick = () => this.showTable();
+      tools.appendChild(tb);
+      const cb = el("button", "minibtn", "⤓ csv");
+      cb.onclick = () => this.exportCSV();
+      tools.appendChild(cb);
+      const pb = el("button", "minibtn", "⤓ png");
+      pb.onclick = () => exportCanvasPNG(this.canvas, this.cfg.title || "SARB data",
+        this.series.length > 1 ? this.visible().map(s => ({ name: s.name, color: s.color })) : []);
+      tools.appendChild(pb);
+    }
+    if (this.series.length > 1) {
+      this.legendEl = el("div", "legend");
+      this.series.forEach((s, i) => {
+        const li = el("button", "li");
+        li.innerHTML = `<span class="sw" style="background:${s.color};${s.dash ? "background-image:repeating-linear-gradient(90deg,transparent 0 3px," + s.color + " 3px 6px);background-color:transparent;" : ""}"></span>${esc(s.name)}`;
+        li.title = "Show / hide";
+        li.onclick = () => { s.on = !s.on; li.classList.toggle("offed", !s.on); this.draw(); };
+        const ax = el("span", "ax" + (s.axis === "R" ? " r" : ""), s.axis);
+        ax.title = "Click to move between left and right axis";
+        ax.onclick = e => {
+          e.stopPropagation();
+          s.axis = s.axis === "R" ? "L" : "R";
+          s.axisManual = true;
+          ax.textContent = s.axis;
+          ax.classList.toggle("r", s.axis === "R");
+          this.draw();
+        };
+        const row = el("span");
+        row.style.cssText = "display:inline-flex;align-items:center;gap:5px";
+        row.appendChild(li); row.appendChild(ax);
+        this.legendEl.appendChild(row);
+      });
+      this.box.appendChild(this.legendEl);
+    }
+    if (cfg.note) this.box.appendChild(el("div", "note", cfg.note));
+    this.applyView();
+    this.setRange(cfg.defRange || "MAX", true);
+    this.draw();
+    this.canvas.addEventListener("pointermove", e => this.hover(e));
+    this.canvas.addEventListener("pointerleave", () => { this.hoverT = null; hideTip(); this.draw(); });
+    charts.push(this);
+  }
+  applyView() {
+    for (const s of this.series) s.obs = this.view === "yoy" ? yoyFromLevels(s.baseObs) : s.baseObs;
+  }
+  fmtNow() { return this.view === "yoy" ? "0.0" : this.cfg.fmt; }
+  unitNow() { return this.view === "yoy" ? "%" : this.cfg.unit; }
+  spanYears() {
+    let t0 = Infinity, t1 = -Infinity;
+    for (const s of this.series) if (s.obs.length) { t0 = Math.min(t0, pt(s.obs[0][0])); t1 = Math.max(t1, pt(lastObs(s.obs)[0])); }
+    return (t1 - t0) / YEAR;
+  }
+  setRange(r, noDraw) {
+    this.range = r;
+    let t1 = -Infinity, t0 = Infinity;
+    for (const s of this.series) if (s.obs.length) { t1 = Math.max(t1, pt(lastObs(s.obs)[0])); t0 = Math.min(t0, pt(s.obs[0][0])); }
+    if (t1 === -Infinity) { this.t0 = 0; this.t1 = 1; return; }
+    this.t1 = t1;
+    this.t0 = r === "MAX" ? t0 : Math.max(t0, t1 - parseInt(r) * YEAR);
+    if (this.rangeEl) [...this.rangeEl.children].forEach(b => b.classList.toggle("on", b.textContent === r));
+    if (!noDraw) this.draw();
+  }
+  visible() { return this.series.filter(s => s.on); }
+  // Split wildly different magnitudes onto the right axis (unless the user
+  // has placed series manually).
+  autoAxes() {
+    if (!this.cfg.dualAuto) return;
+    const cand = this.visible().filter(s => !s.axisManual && s.obs.length);
+    if (cand.length < 2) return;
+    const mags = cand.map(s => {
+      let m = 0;
+      for (const [p, v] of s.obs) { const t = pt(p); if (t >= this.t0 && t <= this.t1 && v != null) m = Math.max(m, Math.abs(v)); }
+      return { s, m: m || 1e-9 };
+    }).sort((a, b) => a.m - b.m);
+    let gi = -1, gr = 1;
+    for (let i = 1; i < mags.length; i++) { const r = mags[i].m / mags[i-1].m; if (r > gr) { gr = r; gi = i; } }
+    if (gr > 6) {
+      const hi = mags.slice(gi), lo = mags.slice(0, gi);
+      const rGroup = hi.length <= lo.length ? hi : lo;
+      for (const x of mags) x.s.axis = "L";
+      for (const x of rGroup) x.s.axis = "R";
+    } else for (const x of mags) x.s.axis = "L";
+    if (this.legendEl) {
+      const chips = this.legendEl.querySelectorAll(".ax");
+      this.series.forEach((s, i) => { if (chips[i]) { chips[i].textContent = s.axis; chips[i].classList.toggle("r", s.axis === "R"); } });
+    }
+  }
+  yDomain(axis) {
+    let lo = Infinity, hi = -Infinity;
+    for (const s of this.visible()) {
+      if ((s.axis || "L") !== axis) continue;
+      for (const [p, v] of s.obs) {
+        const t = pt(p);
+        if (t < this.t0 || t > this.t1 || v == null) continue;
+        if (this.log && v <= 0) continue;
+        if (v < lo) lo = v; if (v > hi) hi = v;
+      }
+    }
+    if (lo === Infinity) { lo = 0; hi = 1; }
+    if (axis === "L") {
+      if ((this.cfg.zeroLine || this.view === "yoy") && !this.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+      if (this.cfg.band && this.view !== "yoy") { lo = Math.min(lo, this.cfg.band.y0); hi = Math.max(hi, this.cfg.band.y1); }
+    }
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const pad = (hi - lo) * 0.07;
+    return this.log ? [lo / 1.15, hi * 1.15] : [lo - pad, hi + pad];
+  }
+  // Union of periods across visible series (exact-match, not step-held --
+  // stacking sums values reported at the SAME period) with each series'
+  // cumulative [lo,hi] band at every period, in legend/selection order.
+  stackTotals() {
+    const vis = this.visible().filter(s => s.obs.length);
+    const periodSet = new Set();
+    for (const s of vis) for (const [p] of s.obs) { const t = pt(p); if (t >= this.t0 && t <= this.t1) periodSet.add(p); }
+    const periods = [...periodSet].sort();
+    const maps = vis.map(s => new Map(s.obs));
+    let extLo = 0, extHi = 0;
+    const stacks = periods.map(p => {
+      let posCum = 0, negCum = 0;
+      const bounds = maps.map(m => {
+        const v = m.get(p);
+        const vv = v == null ? 0 : v;
+        let lo, hi;
+        if (vv >= 0) { lo = posCum; posCum += vv; hi = posCum; } else { hi = negCum; negCum += vv; lo = negCum; }
+        return [lo, hi];
+      });
+      extHi = Math.max(extHi, posCum); extLo = Math.min(extLo, negCum);
+      return bounds;
+    });
+    return { vis, periods, stacks, extent: [extLo, extHi] };
+  }
+  draw() {
+    const c = this.canvas, dpr = window.devicePixelRatio || 1;
+    const W = this.box.clientWidth || 600;
+    // Fixed, compact height -- rows no longer force cards to match each
+    // other's height (see equalizeGridRows), so charts always render at
+    // their natural size instead of stretching to fill a taller sibling.
+    const H = this.cfg.height || 260;
+    c.width = W * dpr; c.height = H * dpr; c.style.height = H + "px";
+    const g = c.getContext("2d");
+    g.scale(dpr, dpr);
+    const muted = css("--muted"), grid = css("--grid"), axisC = css("--axis");
+    this.autoAxes();
+    const hasR = this.visible().some(s => (s.axis || "L") === "R");
+    const stacked = this.cfg.style === "stackbar" || this.cfg.style === "stackarea";
+    let stackData = null, yL0, yL1;
+    if (stacked) {
+      stackData = this.stackTotals();
+      const [eLo, eHi] = stackData.extent;
+      const pad = (eHi - eLo) * 0.07 || 1;
+      yL0 = Math.min(0, eLo) - (eLo < 0 ? pad : 0);
+      yL1 = eHi + pad;
+    } else {
+      [yL0, yL1] = this.yDomain("L");
+    }
+    let yR0 = 0, yR1 = 1;
+    if (hasR) { const d = this.yDomain("R"); yR0 = d[0]; yR1 = d[1]; }
+    const padL = hasR ? 52 : 8, padR = 52, padT = 8, padB = 22;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    const X = t => padL + (t - this.t0) / (this.t1 - this.t0 || 1) * pw;
+    const mkY = (y0, y1) => v => this.log
+      ? padT + ph - (Math.log(v) - Math.log(y0)) / (Math.log(y1) - Math.log(y0)) * ph
+      : padT + ph - (v - y0) / (y1 - y0) * ph;
+    const YL = mkY(yL0, yL1), YR = mkY(yR0, yR1);
+    const Yof = s => (s.axis || "L") === "R" ? YR : YL;
+    g.font = "11px Segoe UI, system-ui, sans-serif";
+    if (this.cfg.band && this.view !== "yoy") {
+      g.fillStyle = css("--good-bg");
+      g.fillRect(padL, YL(this.cfg.band.y1), pw, YL(this.cfg.band.y0) - YL(this.cfg.band.y1));
+    }
+    // direct value labels are computed first so axis tick labels can
+    // step aside instead of colliding with them at the right edge
+    const visNow = this.visible().filter(s => s.obs.length);
+    this._dl = [];
+    if (!stacked && !hasR && visNow.length >= 1 && visNow.length <= 4) {
+      const used = [];
+      for (const s of visNow) {
+        const o = obsAtOrBefore(s.obs, this.t1);
+        if (!o || o[1] == null || (this.log && o[1] <= 0)) continue;
+        let y = YL(o[1]);
+        while (used.some(u => Math.abs(u - y) < 12)) y += 12;
+        used.push(y);
+        this._dl.push({ y: Math.max(padT + 5, Math.min(padT + ph - 5, y)), color: s.color, text: fmtV(o[1], this.fmtNow()) });
+      }
+    }
+    // left-axis grid + labels
+    const ticksL = this.log ? logTicks(yL0, yL1) : niceTicks(yL0, yL1, 5);
+    g.textBaseline = "middle";
+    for (const v of ticksL) {
+      const y = YL(v);
+      if (y < padT - 2 || y > padT + ph + 2) continue;
+      g.strokeStyle = grid; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+      g.fillStyle = muted;
+      if (hasR) { g.textAlign = "right"; g.fillText(fmtV(v, this.tickFmt(ticksL)), padL - 6, y); }
+      else if (!this._dl.some(d => Math.abs(d.y - y) < 11)) {
+        g.textAlign = "left"; g.fillText(fmtV(v, this.tickFmt(ticksL)), padL + pw + 5, y);
+      }
+    }
+    // right-axis labels (no grid, tinted to the right-hand group)
+    if (hasR) {
+      const rSeries = this.visible().filter(s => s.axis === "R");
+      const tint = rSeries.length === 1 ? rSeries[0].color : muted;
+      const ticksR = this.log ? logTicks(yR0, yR1) : niceTicks(yR0, yR1, 5);
+      g.textAlign = "left";
+      for (const v of ticksR) {
+        const y = YR(v);
+        if (y < padT - 2 || y > padT + ph + 2) continue;
+        g.fillStyle = tint;
+        g.fillText(fmtV(v, this.tickFmt(ticksR)), padL + pw + 6, y);
+      }
+    }
+    if ((this.cfg.zeroLine || this.view === "yoy") && yL0 < 0 && yL1 > 0 && !this.log) {
+      g.strokeStyle = axisC; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(padL, YL(0)); g.lineTo(padL + pw, YL(0)); g.stroke();
+    }
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (const [t, lab] of timeTicks(this.t0, this.t1, pw)) {
+      const x = X(t);
+      g.strokeStyle = grid;
+      g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke();
+      g.fillStyle = muted;
+      g.fillText(lab, x, padT + ph + 6);
+    }
+    const styleMode = this.cfg.style === "area" ? "line" : (this.cfg.style || "line");
+    const visList = this.visible();
+    if (stacked && stackData && stackData.periods.length) {
+      const { vis, periods, stacks } = stackData;
+      if (styleMode === "stackbar") {
+        const bw = Math.max(1, (pw / periods.length) * 0.7);
+        for (let pi = 0; pi < periods.length; pi++) {
+          const x = X(pt(periods[pi])) - bw / 2;
+          const bounds = stacks[pi];
+          for (let i = 0; i < vis.length; i++) {
+            const [lo, hi] = bounds[i];
+            if (lo === hi) continue;
+            const y0 = YL(lo), y1 = YL(hi);
+            g.fillStyle = vis[i].color; g.globalAlpha = 0.88;
+            g.fillRect(x, Math.min(y0, y1), bw, Math.max(1, Math.abs(y1 - y0)));
+          }
+        }
+        g.globalAlpha = 1;
+      } else { // stackarea
+        for (let i = 0; i < vis.length; i++) {
+          g.beginPath();
+          for (let pi = 0; pi < periods.length; pi++) {
+            const x = X(pt(periods[pi])), y = YL(stacks[pi][i][1]);
+            pi === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+          }
+          for (let pi = periods.length - 1; pi >= 0; pi--) g.lineTo(X(pt(periods[pi])), YL(stacks[pi][i][0]));
+          g.closePath();
+          g.fillStyle = vis[i].color; g.globalAlpha = 0.72; g.fill();
+          g.globalAlpha = 1; g.strokeStyle = vis[i].color; g.lineWidth = 1; g.stroke();
+        }
+      }
+    } else
+    for (const s of visList) {
+      const Y = Yof(s);
+      if (styleMode === "bar") {
+        const idx = visList.indexOf(s), nB = visList.length;
+        const obsIn = s.obs.filter(o => { const t = pt(o[0]); return t >= this.t0 && t <= this.t1 && o[1] != null && (!this.log || o[1] > 0); });
+        if (!obsIn.length) continue;
+        const dom0 = s.axis === "R" ? yR0 : yL0, dom1 = s.axis === "R" ? yR1 : yL1;
+        let bv = 0;
+        if (bv < dom0) bv = dom0;
+        if (bv > dom1) bv = dom1;
+        const base = Y(bv);
+        const bw = Math.max(1, (pw / Math.max(1, obsIn.length)) * 0.8 / nB);
+        g.fillStyle = s.color;
+        g.globalAlpha = 0.85;
+        for (const [p, v] of obsIn) {
+          const x = X(pt(p)) - (nB * bw) / 2 + idx * bw;
+          const y = Y(v);
+          g.fillRect(x, Math.min(y, base), bw, Math.max(1, Math.abs(base - y)));
+        }
+        g.globalAlpha = 1;
+        continue;
+      }
+      if (styleMode === "scatter") {
+        const pts0 = this.samplePts(s, X, Y, pw);
+        g.fillStyle = s.color;
+        for (const [x, y] of pts0) { g.beginPath(); g.arc(x, y, 2.4, 0, 7); g.fill(); }
+        continue;
+      }
+      const pts = this.samplePts(s, X, Y, pw);
+      if (!pts.length) continue;
+      if (s.fill) {
+        const y0dom = s.axis === "R" ? yR0 : yL0;
+        g.beginPath();
+        g.moveTo(pts[0][0], Y(Math.max(y0dom, this.log ? y0dom : 0)));
+        for (const [x, y] of pts) g.lineTo(x, y);
+        g.lineTo(pts[pts.length-1][0], Y(Math.max(y0dom, this.log ? y0dom : 0)));
+        g.closePath();
+        g.globalAlpha = 0.13; g.fillStyle = s.color; g.fill(); g.globalAlpha = 1;
+      }
+      g.strokeStyle = s.color; g.lineWidth = s.width || 2;
+      g.setLineDash(s.dash ? [5,4] : []);
+      g.lineJoin = "round";
+      g.beginPath();
+      let started = false;
+      for (let i = 0; i < pts.length; i++) {
+        const [x, y] = pts[i];
+        if (!started) { g.moveTo(x, y); started = true; }
+        else if (s.step) { g.lineTo(x, pts[i-1][1]); g.lineTo(x, y); }
+        else g.lineTo(x, y);
+      }
+      g.stroke();
+      g.setLineDash([]);
+    }
+    // direct labels at the right edge (single-axis, <=4 series)
+    if (this._dl.length) {
+      g.textAlign = "right"; g.textBaseline = "middle"; g.font = "600 11px Segoe UI, system-ui, sans-serif";
+      for (const d of this._dl) { g.fillStyle = d.color; g.fillText(d.text, W - 2, d.y); }
+    }
+    if (this.hoverT != null) {
+      const x = X(this.hoverT);
+      g.strokeStyle = axisC; g.lineWidth = 1; g.setLineDash([3,3]);
+      g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke();
+      g.setLineDash([]);
+      for (const s of this.visible()) {
+        const o = obsAtOrBefore(s.obs, this.hoverT);
+        if (!o || o[1] == null || pt(o[0]) < this.t0 || (this.log && o[1] <= 0)) continue;
+        const Y = Yof(s);
+        g.fillStyle = s.color;
+        g.beginPath(); g.arc(X(pt(o[0])), Y(o[1]), 3.5, 0, 7); g.fill();
+        g.strokeStyle = css("--card"); g.lineWidth = 2;
+        g.beginPath(); g.arc(X(pt(o[0])), Y(o[1]), 3.5, 0, 7); g.stroke();
+      }
+    }
+    this._padL = padL; this._padR = padR;
+  }
+  tickFmt(ticks) {
+    const span = Math.abs(ticks[ticks.length-1] - ticks[0]);
+    if (span >= 100) return "#,##0";
+    if (span >= 10) return "0.0";
+    return span >= 1 ? "0.00" : "0.000";
+  }
+  samplePts(s, X, Y, pw) {
+    const obs = s.obs;
+    let i0 = 0, i1 = obs.length - 1;
+    while (i0 < obs.length && pt(obs[i0][0]) < this.t0) i0++;
+    while (i1 >= 0 && pt(obs[i1][0]) > this.t1) i1--;
+    i0 = Math.max(0, i0 - 1); i1 = Math.min(obs.length - 1, i1 + 1);
+    const n = i1 - i0 + 1;
+    const out = [];
+    if (n <= pw * 1.5) {
+      for (let i = i0; i <= i1; i++) if (obs[i][1] != null && (!this.log || obs[i][1] > 0)) out.push([X(pt(obs[i][0])), Y(obs[i][1])]);
+      return out;
+    }
+    const bucket = (this.t1 - this.t0) / pw;
+    let bStart = this.t0, mn = null, mx = null, mnT = 0, mxT = 0;
+    for (let i = i0; i <= i1; i++) {
+      const t = pt(obs[i][0]), v = obs[i][1];
+      if (v == null || (this.log && v <= 0)) continue;
+      if (t > bStart + bucket) {
+        if (mn != null) {
+          if (mnT <= mxT) { out.push([X(mnT), Y(mn)]); if (mxT !== mnT) out.push([X(mxT), Y(mx)]); }
+          else { out.push([X(mxT), Y(mx)]); out.push([X(mnT), Y(mn)]); }
+        }
+        bStart += Math.ceil((t - bStart) / bucket) * bucket - bucket;
+        bStart = Math.max(bStart, this.t0); mn = null; mx = null;
+        if (t > bStart + bucket) bStart = t;
+      }
+      if (mn == null || v < mn) { mn = v; mnT = t; }
+      if (mx == null || v > mx) { mx = v; mxT = t; }
+    }
+    if (mn != null) { out.push([X(mnT), Y(mn)]); if (mxT !== mnT) out.push([X(mxT), Y(mx)]); }
+    return out;
+  }
+  hover(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const pl = this._padL || 8, pr = this._padR || 52;
+    const frac = (e.clientX - rect.left - pl) / (rect.width - pl - pr);
+    this.hoverT = this.t0 + Math.max(0, Math.min(1, frac)) * (this.t1 - this.t0);
+    this.draw();
+    const rows = [];
+    const hasR = this.visible().some(s => (s.axis || "L") === "R");
+    let period = null;
+    for (const s of this.visible()) {
+      const o = obsAtOrBefore(s.obs, this.hoverT);
+      if (!o || pt(o[0]) < this.t0) continue;
+      if (period == null || pt(o[0]) > pt(period)) period = o[0];
+      rows.push({ s, o });
+    }
+    if (!rows.length) { hideTip(); return; }
+    let html = `<div class="tt-t">${esc(plabel(period))}</div>`;
+    for (const { s, o } of rows) {
+      const tag = hasR ? ` <span style="color:var(--muted);font-size:10px">(${s.axis || "L"})</span>` : "";
+      html += `<div class="tt-r"><span class="sw" style="background:${s.color}"></span><span class="nm">${esc(s.name)}</span>${tag}` +
+        `<span class="v">${fmtV(o[1], this.fmtNow())}${this.unitNow() ? " " + esc(this.unitNow()) : ""}</span></div>`;
+    }
+    showTip(e.clientX, e.clientY, html);
+  }
+  showTable() {
+    const periods = new Set();
+    for (const s of this.visible()) for (const [p] of s.obs) { const t = pt(p); if (t >= this.t0 && t <= this.t1) periods.add(p); }
+    const list = [...periods].sort().reverse().slice(0, 3000);
+    const wrap = el("div", "scrollwrap tall");
+    const tb = el("table", "data");
+    tb.innerHTML = `<thead><tr><th>Period</th>${this.visible().map(s => `<th class="num">${esc(s.name)}</th>`).join("")}</tr></thead>`;
+    const body = el("tbody");
+    for (const p of list) {
+      const tr = el("tr");
+      tr.innerHTML = `<td>${esc(plabel(p))}</td>` + this.visible().map(s => {
+        const m = s.obs.find(o => o[0] === p);
+        return `<td class="num">${m ? fmtV(m[1], this.fmtNow()) : ""}</td>`;
+      }).join("");
+      body.appendChild(tr);
+    }
+    tb.appendChild(body);
+    wrap.appendChild(tb);
+    openModal((this.cfg.title || "Data") + " — table view", wrap);
+  }
+  exportCSV() {
+    const periods = new Set();
+    for (const s of this.visible()) for (const [p] of s.obs) periods.add(p);
+    const list = [...periods].sort();
+    let csv = "﻿Period," + this.visible().map(s => '"' + s.name.replace(/"/g,'""') + '"').join(",") + "\r\n";
+    const maps = this.visible().map(s => new Map(s.obs));
+    for (const p of list) csv += p + "," + maps.map(m => m.has(p) && m.get(p) != null ? m.get(p) : "").join(",") + "\r\n";
+    downloadCSV(csv, (this.cfg.title || "sarb-data"));
+  }
+}
+// Grid rows stretch every card to the tallest one by default, which is
+// exactly backwards for a dashboard of charts + tables: a chart's natural
+// height should set the row, and any taller table/notice card alongside
+// it should be capped to match and made to scroll internally instead.
+function equalizeGridRows(root) {
+  for (const grid of root.querySelectorAll(".grid")) {
+    const cards = [...grid.children].filter(c => c.classList.contains("card"));
+    for (const c of cards) {
+      c.style.height = ""; c.style.overflow = "";
+      const prev = c.querySelector(":scope > .rowfill");
+      if (prev) prev.classList.remove("rowfill");
+    }
+    const rows = new Map();
+    for (const c of cards) {
+      const top = Math.round(c.offsetTop);
+      if (!rows.has(top)) rows.set(top, []);
+      rows.get(top).push(c);
+    }
+    for (const rowCards of rows.values()) {
+      if (rowCards.length < 2) continue;
+      const heights = rowCards.map(c => c.getBoundingClientRect().height);
+      const isChart = rowCards.map(c => !!c.querySelector(":scope > .chartbox"));
+      const hasChart = isChart.some(Boolean);
+      const anchor = hasChart ? Math.max(...heights.filter((h, i) => isChart[i])) : Math.max(...heights);
+      // A CSS grid row track sizes to its tallest cell regardless of
+      // align-items, so a short sibling next to a much taller card leaves
+      // a visible gap of bare grid background below it -- not fixable by
+      // alignment alone. Pin every non-chart card in the row to the same
+      // explicit height (never touch the chart card itself, which must
+      // keep its own fixed size) and let content that doesn't fit scroll.
+      rowCards.forEach((c, i) => {
+        if (hasChart && isChart[i]) return;
+        c.style.height = anchor + "px";
+        c.style.overflow = "hidden";
+        let fillEl = c.querySelector(":scope > .scrollwrap");
+        if (!fillEl) {
+          const kids = [...c.children].filter(k => !k.classList.contains("cardhead") && !k.classList.contains("cardsub"));
+          fillEl = kids[kids.length - 1];
+        }
+        if (fillEl) fillEl.classList.add("rowfill");
+      });
+    }
+  }
+}
+function exportCanvasPNG(canvas, title, legendItems) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.width / dpr, H = canvas.height / dpr;
+  const lh = legendItems && legendItems.length ? 24 : 6;
+  const out = document.createElement("canvas");
+  out.width = W * 2; out.height = (H + 34 + lh) * 2;
+  const g = out.getContext("2d");
+  g.scale(2, 2);
+  g.fillStyle = css("--card");
+  g.fillRect(0, 0, W, H + 34 + lh);
+  g.fillStyle = css("--ink");
+  g.font = "600 14px Segoe UI, system-ui, sans-serif";
+  g.textBaseline = "middle";
+  g.fillText(title, 10, 17);
+  g.drawImage(canvas, 0, 34, W, H);
+  if (legendItems && legendItems.length) {
+    let x = 10;
+    g.font = "11px Segoe UI, system-ui, sans-serif";
+    for (const it of legendItems) {
+      g.fillStyle = it.color; g.fillRect(x, H + 34 + 9, 12, 4);
+      x += 17;
+      g.fillStyle = css("--ink-2");
+      g.fillText(it.name, x, H + 34 + 11);
+      x += g.measureText(it.name).width + 16;
+      if (x > W - 40) break;
+    }
+  }
+  const a = document.createElement("a");
+  a.href = out.toDataURL("image/png");
+  a.download = String(title).replace(/[^\w\- ]+/g, "").replace(/ +/g, "_") + ".png";
+  a.click();
+}
+function downloadCSV(csv, title) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = String(title).replace(/[^\w\- ]+/g, "").replace(/ +/g, "_") + ".csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function niceTicks(lo, hi, n) {
+  const span = hi - lo, step0 = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  let step = mag;
+  for (const m of [1, 2, 2.5, 5, 10]) if (step0 / mag <= m) { step = m * mag; break; }
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+function logTicks(lo, hi) {
+  const out = [];
+  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
+    for (const m of [1, 2, 5]) { const v = m * Math.pow(10, e); if (v >= lo && v <= hi) out.push(v); }
+  return out.length >= 2 ? out : niceTicks(lo, hi, 4);
+}
+function timeTicks(t0, t1, pw) {
+  const span = t1 - t0, out = [];
+  const maxN = Math.max(3, Math.floor(pw / 78));
+  const yrs = span / YEAR;
+  if (yrs > 2.2) {
+    let stepY = Math.ceil(yrs / maxN);
+    for (const s of [1,2,5,10,20,25,50]) if (stepY <= s) { stepY = s; break; }
+    const y0 = new Date(t0).getUTCFullYear();
+    for (let y = Math.ceil(y0 / stepY) * stepY; ; y += stepY) {
+      const t = Date.UTC(y, 0, 1);
+      if (t > t1) break;
+      if (t >= t0) out.push([t, String(y)]);
+    }
+  } else {
+    let stepM = Math.ceil(yrs * 12 / maxN);
+    for (const s of [1,2,3,6,12]) if (stepM <= s) { stepM = s; break; }
+    const d0 = new Date(t0);
+    let y = d0.getUTCFullYear(), m = d0.getUTCMonth() + 1;
+    m = Math.ceil(m / stepM) * stepM;
+    for (;;) {
+      y += Math.floor(m / 12); m = m % 12;
+      const t = Date.UTC(y, m, 1);
+      if (t > t1) break;
+      if (t >= t0) out.push([t, `${MONTHS[m]} ${String(y).slice(2)}`]);
+      m += stepM;
+    }
+  }
+  return out;
+}
+
+/* tooltip + modal */
+function showTip(x, y, html) {
+  const tt = $("#tooltip");
+  tt.innerHTML = html;
+  tt.style.display = "block";
+  const r = tt.getBoundingClientRect();
+  let left = x + 16, top = y + 14;
+  if (left + r.width > innerWidth - 8) left = x - r.width - 12;
+  if (top + r.height > innerHeight - 8) top = y - r.height - 10;
+  tt.style.left = left + "px"; tt.style.top = top + "px";
+}
+function hideTip() { $("#tooltip").style.display = "none"; }
+function openModal(title, bodyEl) {
+  $("#m-title").textContent = title;
+  const b = $("#m-body");
+  b.innerHTML = "";
+  if (typeof bodyEl === "string") b.innerHTML = bodyEl; else b.appendChild(bodyEl);
+  $("#modalwrap").classList.add("open");
+}
+function closeModal() { $("#modalwrap").classList.remove("open"); }
+$("#modalwrap") && ($("#modalwrap").onclick = e => { if (e.target.id === "modalwrap") closeModal(); });
+
+/* fetch any SARB timeseries code with frequency auto-detect */
+async function fetchAnyCode(code) {
+  const to = new Date(todayUTC()).toISOString().slice(0,10);
+  const rows = await jget(`${API}/WebIndicators/Shared/GetTimeseriesObservations/${code}/1946-01-01/${to}`, 60000);
+  if (!rows || !rows.length) throw new Error("no observations");
+  const isDaily = /dd/.test(rows[0].FormatDate || "");
+  const s = cObs(rows, isDaily);
+  if (!s || !s.obs.length) throw new Error("no observations");
+  D.daily[code] = s;
+  if (typeof catalog === "function") catalog._c = null;
+  return s;
+}
+/* export any rendered table to CSV */
+function exportTableCSV(tableEl, title) {
+  let csv = "﻿";
+  for (const tr of tableEl.querySelectorAll("tr")) {
+    const cells = [...tr.querySelectorAll("th,td")].map(c => '"' + c.innerText.replace(/\s+/g, " ").trim().replace(/"/g, '""') + '"');
+    if (cells.length) csv += cells.join(",") + "\r\n";
+  }
+  downloadCSV(csv, title);
+}
+/* pop-up history plot for a series code (used by clickable table rows) */
+async function plotCode(code, name, fmt) {
+  const body = el("div");
+  openModal(name || code, body);
+  let s = D.daily[code];
+  if (!s || !s.obs || s.obs.length < 3) {
+    body.appendChild(el("div", "errnote", "Fetching history from the SARB API…"));
+    try { s = await fetchAnyCode(code); }
+    catch (e) { body.innerHTML = ""; body.appendChild(el("div", "errnote",
+      "No history available for " + esc(code) + (LIVE_OK ? "" : " — you appear to be offline") + ".")); return; }
+  }
+  body.innerHTML = "";
+  const head = el("div", "cardhead");
+  const tools = el("div", "tools");
+  head.appendChild(tools);
+  body.appendChild(head);
+  new Chart(body, { title: name || code, series: [{ name: s.name || name || code, obs: s.obs }],
+    fmt: fmt || s.fmt, ranges: ["1Y","5Y","10Y","MAX"], defRange: "MAX", logToggle: true, toolsEl: tools, height: 300 });
+  if (s.desc) body.appendChild(el("div", "note", esc(s.desc)));
+}
+/* make rows with data-code clickable -> history plot */
+function bindRowPlots(scope) {
+  scope.addEventListener("click", e => {
+    const tr = e.target.closest("tr.plotrow");
+    if (!tr || !tr.dataset.code) return;
+    plotCode(tr.dataset.code, tr.dataset.name || tr.cells[0].innerText.trim(), tr.dataset.fmt || null);
+  });
+}
+
+/* card scaffolding */
+function card(parent, cls, title, sub) {
+  const c = el("div", "card" + (cls ? " " + cls : ""));
+  const head = el("div", "cardhead");
+  head.appendChild(el("h3", null, esc(title)));
+  const tools = el("div", "tools");
+  head.appendChild(tools);
+  c.appendChild(head);
+  if (sub) c.appendChild(el("div", "cardsub", sub));
+  parent.appendChild(c);
+  return { cardEl: c, tools };
+}
+function chartCard(parent, cls, title, sub, cfg) {
+  const { cardEl, tools } = card(parent, cls, title, sub);
+  try {
+    cfg.toolsEl = tools;
+    cfg.title = title;
+    if (!cfg.series || !cfg.series.some(s => s && s.obs && s.obs.length)) throw new Error("no data");
+    cfg.series = cfg.series.filter(s => s && s.obs && s.obs.length);
+    return new Chart(cardEl, cfg);
+  } catch (e) {
+    cardEl.appendChild(el("div", "errnote", "Data unavailable — " + esc(e.message)));
+    return null;
+  }
+}
+function sparkline(canvas, obs, color, years) {
+  if (!obs || obs.length < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = 86, H = 30;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const g = canvas.getContext("2d");
+  g.scale(dpr, dpr);
+  const t1 = pt(lastObs(obs)[0]), t0 = t1 - (years || 5) * YEAR;
+  const seg = obs.filter(o => pt(o[0]) >= t0 && o[1] != null);
+  if (seg.length < 2) return;
+  let lo = Infinity, hi = -Infinity;
+  for (const [, v] of seg) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const X = t => (t - t0) / (t1 - t0) * (W - 6) + 1;
+  const Y = v => H - 4 - (v - lo) / (hi - lo) * (H - 8);
+  g.strokeStyle = color; g.lineWidth = 1.5; g.lineJoin = "round";
+  g.beginPath();
+  const step = Math.max(1, Math.floor(seg.length / 90));
+  for (let i = 0; i < seg.length; i += step) {
+    const [p, v] = seg[i];
+    i === 0 ? g.moveTo(X(pt(p)), Y(v)) : g.lineTo(X(pt(p)), Y(v));
+  }
+  const [lp, lv] = lastObs(seg);
+  g.lineTo(X(pt(lp)), Y(lv));
+  g.stroke();
+  g.fillStyle = color;
+  g.beginPath(); g.arc(X(pt(lp)), Y(lv), 2.2, 0, 7); g.fill();
+}
+
+
+/* =====================================================================
+   Tab builders
+   ===================================================================== */
+function S(code) { return D.daily[code] || null; }
+function sO(code) { const s = S(code); return s ? s.obs : null; }
+function sName(code, fall) { const s = S(code); return s ? s.name : (fall || code); }
+function archByName(dt, catRx, nameRx) {
+  const list = archiveSeries(dt);
+  if (!list) return null;
+  return list.find(s => (!catRx || catRx.test(s.catName)) && nameRx.test(s.name)) || null;
+}
+function upChip(v, d, invert) {
+  if (v == null) return `<span class="chip flat">–</span>`;
+  const good = invert ? v < 0 : v > 0;
+  const cls = v === 0 ? "flat" : (good ? "down" : "up");
+  return `<span class="chip ${cls}">${fmtPct(v, d)}</span>`;
+}
+function tile(parent, o) {
+  const t = el("div", "tile");
+  t.innerHTML = `<div class="t-label">${esc(o.label)}</div>` +
+    `<div class="t-value">${esc(o.value)}${o.unit ? `<span class="unit"> ${esc(o.unit)}</span>` : ""}</div>` +
+    `<div class="t-sub">${o.sub || ""}</div>`;
+  if (o.spark) {
+    const cv = document.createElement("canvas");
+    t.appendChild(cv);
+    sparkline(cv, o.spark, o.sparkColor || css("--s1"), o.sparkYears || 5);
+  }
+  if (o.code) { t.style.cursor = "pointer"; t.title = "Click for full history"; t.onclick = () => plotCode(o.code, o.label, o.fmt); }
+  parent.appendChild(t);
+  return t;
+}
+function simpleTable(rows, cols) {
+  const wrap = el("div", "scrollwrap");
+  const tb = el("table", "data");
+  tb.innerHTML = `<thead><tr>${cols.map(c => `<th class="${c.num ? "num" : ""}">${esc(c.h)}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.join("")}</tbody>`;
+  wrap.appendChild(tb);
+  return wrap;
+}
+function addCsv(c, wrap, title) {
+  const b = el("button", "minibtn", "⤓ csv");
+  b.onclick = () => exportTableCSV(wrap.querySelector("table"), title);
+  c.tools.appendChild(b);
+}
+function prow(code, fmt) { return `class="plotrow" data-code="${esc(code)}"${fmt ? ` data-fmt="${esc(fmt)}"` : ""} title="Click for full history"`; }
+
+/* ---------- Yield curve ----------
+   Front end: daily T-bill tender rates (91/182/273/364d) -- genuine
+   money-market instruments. Back end: the SARB's own government-bond
+   yield MATURITY BUCKETS (0-3y/3-5y/5-10y/10-15y/20-30y), sourced from
+   the Quarterly Bulletin "download facility" (KBP20xx codes) -- these
+   are cataloged by the SARB but not reachable through the WebIndicators
+   API used everywhere else in this app, confirmed by direct testing.
+   They replace the old, much cruder mix of two individual bonds
+   (R2030/R209) plus two broad "5-10y"/"10y+" daily averages: five real,
+   consistently-defined maturity bands is a materially better curve
+   shape than two arbitrary bonds. Monotone-cubic interpolation between
+   points; snapshots read straight out of each instrument's own history.
+
+   IMPORTANT LIMITATION (deliberately not hidden): this is a market-yield
+   curve, not a bootstrapped zero/spot curve. Two unresolved gaps:
+    1. Money-market yields (T-bills, NCDs, Jibar) are quoted simple
+       ACT/365; government bond yields are quoted as YTM compounded
+       semi-annually (NACS, JSE convention) -- different compounding
+       bases plotted on one axis without conversion.
+    2. Even after fixing (1), a bond's YTM already bakes in ITS OWN
+       coupon/reinvestment assumptions -- turning market yields into a
+       true zero curve requires bootstrapping from multiple individual
+       bonds' cash flows across the curve, which needs bond-level price
+       and coupon data this API does not expose (only two individual
+       bonds, R2030/R209, are published -- nowhere near enough to
+       bootstrap). So this curve is best read as "the shape and level
+       of market yields by maturity", not as a precision term-structure
+       tool for pricing. */
+const CURVE_GOVT = [
+  { code: "MMRD203A", label: "T-bill 91d", m: 0.25, mm: true },
+  { code: "MMRD206A", label: "T-bill 182d", m: 0.5, mm: true },
+  { code: "MMRD209A", label: "T-bill 273d", m: 0.75, mm: true },
+  { code: "MMRD212A", label: "T-bill 364d", m: 1.0, mm: true },
+  { code: "KBP2000M", label: "Govt bonds 0–3y", m: 1.5 },
+  { code: "KBP2001M", label: "Govt bonds 3–5y", m: 4 },
+  { code: "KBP2002M", label: "Govt bonds 5–10y", m: 7.5 },
+  { code: "KBP2003M", label: "Govt bonds 10–15y", m: 12.5 },
+  { code: "KBP2049M", label: "Govt bonds 20–30y", m: 25 },
+];
+const CURVE_MM = [
+  { code: "MMRD855A", label: "Zaronia O/N", m: 0.004 },
+  { code: "MMRD403A", label: "Jibar 3m", m: 0.25 },
+  { code: "MMRD303A", label: "NCD 3m", m: 0.25 },
+  { code: "MMRD306A", label: "NCD 6m", m: 0.5 },
+  { code: "MMRD312A", label: "NCD 12m", m: 1.0 },
+];
+function instYears(inst) {
+  if (inst.m != null) return inst.m;
+  return Math.max(0.05, (pt(inst.mat) - todayUTC()) / YEAR);
+}
+// Money-market instruments (T-bill tenders) are quoted as a simple ACT/365
+// annualised yield over their own term; government bonds are quoted as YTM
+// compounded semi-annually (NACS, the JSE convention). Convert the simple
+// rate to its NACS-equivalent so the whole curve sits on one basis: first
+// to an effective annual rate (compounding the stated term's growth factor
+// up to a full year), then to nominal-annual-compounded-semi-annually.
+function simpleToNACS(rPct, years) {
+  if (rPct == null || !years) return rPct;
+  const r = rPct / 100, growth = 1 + r * years;
+  if (growth <= 0) return rPct;
+  const ear = Math.pow(growth, 1 / years) - 1;
+  return (2 * (Math.sqrt(1 + ear) - 1)) * 100;
+}
+function curveObs(inst, cache) {
+  if (cache.has(inst.code)) return cache.get(inst.code);
+  // A literal 0 is a missing-data placeholder, not a real quote -- none of
+  // these instruments has ever actually yielded 0% (KBP2001M, the 3-5y bond
+  // bucket, has a ~23-month run of zeros from 2023-03 that would otherwise
+  // surface as a fake 0% point when comparing 2-3 years back).
+  const raw = (sO(inst.code) || []).filter(([, v]) => v !== 0);
+  const out = inst.mm ? raw.map(([p, v]) => [p, simpleToNACS(v, instYears(inst))]) : raw;
+  cache.set(inst.code, out);
+  return out;
+}
+function curvePoints(instruments, atT, cache) {
+  const out = [];
+  for (const inst of instruments) {
+    const obs = curveObs(inst, cache);
+    if (!obs.length) continue;
+    const o = obsAtOrBefore(obs, atT);
+    if (!o || o[1] == null) continue;
+    // The monthly bond-bucket series run 6-8 weeks behind "today" simply
+    // from normal publication lag (not staleness) -- allow ~100 days so
+    // those still show up in the "Today" snapshot; daily T-bill/repo
+    // instruments are unaffected since they're never more than a day old.
+    if (atT - pt(o[0]) > 100 * 86400e3) continue; // instrument didn't exist / discontinued at that date
+    out.push({ x: instYears(inst), y: o[1], label: inst.label, code: inst.code, date: o[0] });
+  }
+  out.sort((a, b) => a.x - b.x);
+  // collapse duplicate maturities (keep first)
+  return out.filter((p, i) => i === 0 || p.x > out[i-1].x + 1e-6);
+}
+// Fritsch-Carlson monotone cubic interpolation -> evaluator f(x)
+function monotoneInterp(pts) {
+  const n = pts.length;
+  if (n < 2) return null;
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const dx = [], dy = [], sl = [];
+  for (let i = 0; i < n-1; i++) { dx.push(xs[i+1]-xs[i]); dy.push(ys[i+1]-ys[i]); sl.push(dy[i]/dx[i]); }
+  const m = [sl[0]];
+  for (let i = 1; i < n-1; i++) {
+    if (sl[i-1] * sl[i] <= 0) m.push(0);
+    else { const w1 = 2*dx[i] + dx[i-1], w2 = dx[i] + 2*dx[i-1]; m.push((w1 + w2) / (w1/sl[i-1] + w2/sl[i])); }
+  }
+  m.push(sl[n-2]);
+  return x => {
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[n-1]) return ys[n-1];
+    let i = 0;
+    while (i < n-2 && x > xs[i+1]) i++;
+    const t = (x - xs[i]) / dx[i];
+    const h00 = (1+2*t)*(1-t)*(1-t), h10 = t*(1-t)*(1-t), h01 = t*t*(3-2*t), h11 = t*t*(t-1);
+    return h00*ys[i] + h10*dx[i]*m[i] + h01*ys[i+1] + h11*dx[i]*m[i+1];
+  };
+}
+function buildYieldCurve(grid) {
+  const t1 = todayUTC();
+  const curveCache = new Map();
+  // "Latest", "3 months ago" and "1 year ago" are always shown; a fifth,
+  // more distant comparison is user-selectable and OFF by default -- 5
+  // years back was the fixed default and could dwarf the more relevant
+  // recent lines (rates swing enough over 5 years to stretch the axis and
+  // squash everything else). No "1Y" option here since that line is
+  // already always shown. "Latest" rather than "Today" since the bond
+  // buckets are monthly prints running 6-8 weeks behind -- only the T-bill/
+  // repo/Jibar points are truly as-of-today; see the per-point dates in the
+  // instrument table and tooltip below.
+  const FAR_OPTS = [["Off", 0], ["2Y", 2], ["3Y", 3], ["5Y", 5]];
+  let farYears = 0;
+  let snaps = [];
+  function buildSnaps() {
+    const list = [
+      { label: "Latest", off: 0, colorVar: "--s5", width: 2.6 },
+      { label: "3 months ago", off: 91, colorVar: "--s1", width: 1.6 },
+      { label: "1 year ago", off: 365, colorVar: "--s3", width: 1.6 },
+    ];
+    if (farYears > 0) list.push({ label: farYears + " year" + (farYears > 1 ? "s" : "") + " ago", off: 365 * farYears, colorVar: "--s4", width: 1.4, dash: true });
+    const prevOn = new Map(snaps.map(sn => [sn.label, sn.on]));
+    snaps = list.map(sn => Object.assign(sn, { on: prevOn.has(sn.label) ? prevOn.get(sn.label) : true,
+      pts: curvePoints(CURVE_GOVT, t1 - sn.off * 86400e3, curveCache) })).filter(sn => sn.pts.length >= 3);
+  }
+  buildSnaps();
+  if (!snaps.length) return;
+
+  const cc = card(grid, "half", "Government yield curve", "T-bill tenders (daily, NACS-equivalent) and bond yield maturity buckets (monthly), interpolated.");
+  const box = el("div", "chartbox");
+  const cv = document.createElement("canvas");
+  box.appendChild(cv);
+  cc.cardEl.appendChild(box);
+  const legend = el("div", "legend");
+  box.appendChild(legend);
+  function renderLegend() {
+    legend.innerHTML = "";
+    for (const sn of snaps) {
+      const li = el("button", "li" + (sn.on ? "" : " offed"));
+      li.innerHTML = `<span class="sw" style="background:${css(sn.colorVar)}"></span>${esc(sn.label)}`;
+      li.onclick = () => { sn.on = !sn.on; li.classList.toggle("offed", !sn.on); chartObj.draw(); };
+      legend.appendChild(li);
+    }
+  }
+  renderLegend();
+  const farCtl = el("span", "rangebtns");
+  for (const [lab, yrs] of FAR_OPTS) {
+    const b = el("button", yrs === farYears ? "on" : null, lab);
+    b.onclick = () => {
+      farYears = yrs;
+      [...farCtl.children].forEach(x => x.classList.toggle("on", x.textContent === lab));
+      buildSnaps();
+      renderLegend();
+      chartObj.draw();
+    };
+    farCtl.appendChild(b);
+  }
+  cc.tools.appendChild(el("span", null, "<span style='color:var(--muted);font-size:11.5px;margin-right:2px'>compare vs:</span>"));
+  cc.tools.appendChild(farCtl);
+  cc.cardEl.appendChild(el("div", "note",
+    "Indicative curve from quoted market yields, not a bootstrapped zero curve — the SARB only publishes two individual bonds " +
+    "(R2030, R209), not enough to strip a true term structure. T-bill yields are converted from simple ACT/365 to NACS-equivalent " +
+    "(semi-annual compounding) so they sit on the same basis as the bond yields."));
+  const snOn = () => snaps.filter(sn => sn.on);
+
+  const XS = m => Math.sqrt(m); // sqrt-maturity axis, standard for curves
+  const chartObj = {
+    draw() {
+      const dpr = window.devicePixelRatio || 1;
+      const W = box.clientWidth || 500;
+      const H = 250;
+      cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+      const g = cv.getContext("2d");
+      g.scale(dpr, dpr);
+      const muted = css("--muted"), grid2 = css("--grid");
+      let lo = Infinity, hi = -Infinity, xMax = 0;
+      const act = snOn().length ? snOn() : snaps;
+      for (const sn of act) for (const p of sn.pts) { lo = Math.min(lo, p.y); hi = Math.max(hi, p.y); xMax = Math.max(xMax, p.x); }
+      const pad = (hi - lo) * 0.12 || 0.5;
+      lo -= pad; hi += pad;
+      const padL = 8, padR = 44, padT = 8, padB = 20;
+      const pw = W - padL - padR, ph = H - padT - padB;
+      const X = m => padL + XS(m) / XS(xMax) * pw;
+      const Y = v => padT + ph - (v - lo) / (hi - lo) * ph;
+      g.font = "11px Segoe UI, system-ui, sans-serif";
+      g.textBaseline = "middle"; g.textAlign = "left";
+      for (const v of niceTicks(lo, hi, 4)) {
+        const y = Y(v);
+        if (y < padT || y > padT + ph) continue;
+        g.strokeStyle = grid2; g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+        g.fillStyle = muted; g.fillText(fmtV(v, "0.0"), padL + pw + 5, y);
+      }
+      g.textAlign = "center"; g.textBaseline = "top";
+      for (const [m, lab] of [[0.25,"3m"],[1,"1y"],[2,"2y"],[5,"5y"],[10,"10y"],[15,"15y"]]) {
+        if (m > xMax * 1.05) continue;
+        const x = X(m);
+        g.strokeStyle = grid2; g.beginPath(); g.moveTo(x, padT); g.lineTo(x, padT + ph); g.stroke();
+        g.fillStyle = muted; g.fillText(lab, x, padT + ph + 5);
+      }
+      for (const sn of [...act].reverse()) {
+        const f = monotoneInterp(sn.pts);
+        if (!f) continue;
+        g.strokeStyle = css(sn.colorVar); g.lineWidth = sn.width;
+        g.setLineDash(sn.dash ? [5,4] : []);
+        g.beginPath();
+        const x0 = sn.pts[0].x, x1 = sn.pts[sn.pts.length-1].x;
+        for (let k = 0; k <= 120; k++) {
+          const m = x0 + (x1 - x0) * k / 120;
+          k === 0 ? g.moveTo(X(m), Y(f(m))) : g.lineTo(X(m), Y(f(m)));
+        }
+        g.stroke();
+        g.setLineDash([]);
+        for (const p of sn.pts) {
+          g.fillStyle = css(sn.colorVar);
+          g.beginPath(); g.arc(X(p.x), Y(p.y), sn.off === 0 ? 3.6 : 2.4, 0, 7); g.fill();
+          if (sn.off === 0) {
+            g.strokeStyle = css("--card"); g.lineWidth = 1.5;
+            g.beginPath(); g.arc(X(p.x), Y(p.y), 3.6, 0, 7); g.stroke();
+          }
+        }
+      }
+      this._X = X; this._xMax = xMax;
+    }
+  };
+  cv.addEventListener("pointermove", e => {
+    const rect = cv.getBoundingClientRect();
+    const frac = (e.clientX - rect.left - 8) / (rect.width - 52);
+    const mHover = Math.pow(Math.max(0, Math.min(1, frac)) * XS(chartObj._xMax || 15), 2);
+    const actNow = snaps.filter(sn => sn.on);
+    const today = actNow[0] || snaps[0];
+    let best = null;
+    for (const p of today.pts) if (!best || Math.abs(XS(p.x) - XS(mHover)) < Math.abs(XS(best.x) - XS(mHover))) best = p;
+    if (!best) return;
+    let html = `<div class="tt-t">${esc(best.label)}</div>`;
+    for (const sn of actNow) {
+      const p = sn.pts.find(q => q.code === best.code);
+      html += `<div class="tt-r"><span class="sw" style="background:${css(sn.colorVar)}"></span>${esc(sn.label)}` +
+        `<span class="v">${p ? fmtV(p.y, "0.00") + " % " + `<span style="color:var(--muted);font-size:10px">(${plabel(p.date)})</span>` : "–"}</span></div>`;
+    }
+    showTip(e.clientX, e.clientY, html);
+  });
+  cv.addEventListener("pointerleave", hideTip);
+  const curveGrid = () => {
+    const cols = snaps.map(sn => sn.label);
+    const rows = [];
+    for (const inst of CURVE_GOVT) {
+      const cells = snaps.map(sn => { const p = sn.pts.find(q => q.code === inst.code); return p ? p.y : null; });
+      if (cells.some(v => v != null)) rows.push({ label: inst.label, cells });
+    }
+    return { cols, rows };
+  };
+  const tbb = el("button", "minibtn", "⊞ table");
+  tbb.onclick = () => {
+    const { cols, rows } = curveGrid();
+    const wrapT = el("div", "scrollwrap");
+    const t = el("table", "data");
+    t.innerHTML = `<thead><tr><th>Instrument</th>${cols.map(c2 => `<th class="num">${esc(c2)}</th>`).join("")}</tr></thead>` +
+      `<tbody>${rows.map(r2 => `<tr><td>${esc(r2.label)}</td>${r2.cells.map(v => `<td class="num">${v == null ? "–" : fmtV(v, "0.00")}</td>`).join("")}</tr>`).join("")}</tbody>`;
+    wrapT.appendChild(t);
+    openModal("Government yield curve — table view", wrapT);
+  };
+  cc.tools.appendChild(tbb);
+  const csvb = el("button", "minibtn", "⤓ csv");
+  csvb.onclick = () => {
+    const { cols, rows } = curveGrid();
+    let csv = "﻿Instrument," + cols.join(",") + "\r\n";
+    for (const r2 of rows) csv += '"' + r2.label.replace(/"/g, '""') + '",' + r2.cells.map(v => v == null ? "" : v).join(",") + "\r\n";
+    downloadCSV(csv, "SA government yield curve");
+  };
+  cc.tools.appendChild(csvb);
+  const pngb = el("button", "minibtn", "⤓ png");
+  pngb.onclick = () => exportCanvasPNG(cv, "Government yield curve",
+    snaps.filter(sn => sn.on).map(sn => ({ name: sn.label, color: css(sn.colorVar) })));
+  cc.tools.appendChild(pngb);
+  chartObj.draw();
+  charts.push(chartObj);
+
+  // instrument table with bps moves
+  const tb = card(grid, "half", "Curve instruments", "Latest levels and moves in basis points. Click a row for history.");
+  const bp = (cur, ref) => (ref == null || cur == null) ? null : Math.round((cur - ref) * 100);
+  const bpCell = v => v == null ? `<td class="num" style="color:var(--muted)">–</td>`
+    : `<td class="num" style="color:${v > 0 ? "var(--bad)" : v < 0 ? "var(--good)" : "var(--muted)"}">${v > 0 ? "+" : ""}${v}</td>`;
+  const rows = [];
+  const sections = [["Government", CURVE_GOVT], ["Money market", [{ code: "MMRD002A", label: "Repo (policy)" }].concat(CURVE_MM)]];
+  for (const [secName, list] of sections) {
+    rows.push(`<tr class="sec"><td colspan="6">${esc(secName)}</td></tr>`);
+    for (const inst of list) {
+      // NACS-converted for T-bills (matches the chart); a no-op passthrough
+      // for everything else (bond buckets, repo, Jibar, NCDs, Zaronia).
+      const obs = curveObs(inst, curveCache);
+      if (!obs || !obs.length) continue;
+      const cur = lastObs(obs);
+      const refAt = days => { const o = obsAtOrBefore(obs, pt(cur[0]) - days * 86400e3); return o ? o[1] : null; };
+      // 1d is meaningful for T-bills/repo (daily) and shows flat 0bp for the
+      // monthly bond buckets between prints -- expected, not a bug; 3m/1y
+      // give real movement for both.
+      rows.push(`<tr ${prow(inst.code, "0.00")}><td>${esc(inst.label)}${inst.mm ? ` <span style="color:var(--muted);font-size:10px">NACS-eq</span>` : ""}</td>` +
+        `<td class="num"><b>${fmtV(cur[1], "0.00")}</b></td>` +
+        `<td style="color:var(--muted);font-size:11px">${esc(plabel(cur[0]))}</td>` +
+        bpCell(bp(cur[1], obs.length > 1 ? obs[obs.length-2][1] : null)) +
+        bpCell(bp(cur[1], refAt(91))) + bpCell(bp(cur[1], refAt(365))) + `</tr>`);
+    }
+  }
+  const w = simpleTable(rows, [{h:"Instrument"},{h:"Yield %",num:1},{h:"As of"},{h:"vs prior print",num:1},{h:"3m bp",num:1},{h:"1y bp",num:1}]);
+  tb.cardEl.appendChild(w);
+  addCsv(tb, w, "SA yield curve instruments");
+}
+
+/* ---------- Overview ---------- */
+function buildOverview(root) {
+  root.appendChild(el("div", "intro",
+    "The Reserve Bank's key policy, money-market and exchange rates at a glance, with the SARB's own release " +
+    "register and market-operations notices. All figures come straight from the SARB Web API."));
+  const tiles = el("div", "tiles");
+  root.appendChild(tiles);
+  const hv = c => homeVal(c);
+  const repo = hv("MMRD002A"), prime = hv("MMRD000A"), cpi = hv("CPI1000F"), ppi = hv("PPI1000F"),
+        usd = hv("EXCX135D"), neer = hv("EER4504A");
+  if (repo) {
+    let sub = esc(repo.date);
+    const rc = (D.rateChanges || []).find(r => r.code === "MRDREPOR");
+    if (rc && rc.changes.length) {
+      const [d] = rc.changes[rc.changes.length-1];
+      const days = Math.round((todayUTC() - pt(d)) / 86400e3);
+      sub = `last change ${esc(plabel(d))} · ${days} days ago`;
+    }
+    tile(tiles, { label:"SARB policy (repo) rate", value:fmtV(repo.value,"0.00"), unit:"%", sub, spark:sO("MMRD002A"), sparkYears:10, code:"MMRD002A", fmt:"0.00" });
+  }
+  if (prime) tile(tiles, { label:"Prime lending rate", value:fmtV(prime.value,"0.00"), unit:"%",
+    sub:`spread over repo ${fmtV(prime.value - (repo ? repo.value : 0), "0.00")} pp`, spark:sO("MMRD000A"), sparkYears:10, sparkColor:css("--s4"), code:"MMRD000A", fmt:"0.00" });
+  if (cpi) {
+    const inBand = cpi.value >= 3 && cpi.value <= 6;
+    tile(tiles, { label:"CPI inflation (y/y)", value:fmtV(cpi.value,"0.0"), unit:"%",
+      sub:`${esc(cpi.date)} · target 3–6% <span class="chip ${inBand ? "good" : "bad"}">${inBand ? "in band" : "outside band"}</span>`,
+      spark:sO("CPI1000F"), sparkColor:css("--s5"), code:"CPI1000F", fmt:"0.0" });
+  }
+  if (ppi) tile(tiles, { label:"PPI inflation (y/y)", value:fmtV(ppi.value,"0.0"), unit:"%", sub:esc(ppi.date),
+    spark:sO("PPI1000F"), sparkColor:css("--s6"), code:"PPI1000F", fmt:"0.0" });
+  if (usd) {
+    const obs = sO("EXCX135D");
+    let chg = null;
+    if (obs && obs.length > 1) chg = (obs[obs.length-1][1] / obs[obs.length-2][1] - 1) * 100;
+    tile(tiles, { label:"Rand per US dollar", value:fmtV(usd.value,"0.0000"),
+      sub:`${esc(usd.date)} ${chg != null ? upChip(chg, 2, true) : ""}`, spark:obs, sparkYears:2, sparkColor:css("--s2"), code:"EXCX135D", fmt:"0.0000" });
+  }
+  if (neer) tile(tiles, { label:"Nominal effective rand", value:fmtV(neer.value,"0.00"),
+    sub:`trade-weighted index · ${esc(neer.date)}`, spark:sO("EER4504A"), sparkYears:2, sparkColor:css("--s3"), code:"EER4504A", fmt:"0.00" });
+
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+  chartCard(grid, "twothird", "Overnight rates vs repo", "Sabor and Zaronia against the policy rate.", {
+    series: [
+      { name: "Repo rate", obs: stepExtend(sO("MMRD002A") || []), step: true, color: css("--s5"), width: 2.4 },
+      { name: "Sabor", obs: sO("MMRD851A") || [], color: css("--s1") },
+      { name: "Zaronia", obs: sO("MMRD855A") || [], color: css("--s2") },
+    ],
+    fmt: "0.00", unit: "%", ranges: ["1Y","3Y","5Y","MAX"], defRange: "1Y"
+  });
+  const anc = card(grid, "third", "Desk notices", "Most recent market-operations notices, all categories.");
+  const noticesWrap = el("div", "scrollwrap");
+  anc.cardEl.appendChild(noticesWrap);
+  try {
+    const all = [];
+    for (const [cid, rows] of Object.entries((D.mcm && D.mcm.contributions) || {}))
+      for (const r of rows || []) if (r && r.Date) all.push({ cid, r });
+    if (!all.length) throw new Error("none held");
+    all.sort((a, b) => a.r.Date < b.r.Date ? 1 : -1);
+    const catName = cid => { const c = D.mcm.categories.find(x => x.id === cid); return c ? c.description : cid; };
+    let shown = 0;
+    for (const { cid, r } of all) {
+      if (shown >= 6) break;
+      if (mcmJunky(r.XMLData)) continue;
+      const lines = mcmLines(r.XMLData).map(l => l.join(" ").trim()).filter(x => x);
+      noticesWrap.appendChild(el("div", "annc",
+        `<div class="d">${esc((r.Date || "").slice(0, 10))} · ${esc(catName(cid))}</div>${esc(lines.slice(0, 3).join(" — ").slice(0, 220))}`));
+      shown++;
+    }
+    if (!shown) throw new Error("none held");
+  } catch (e) { noticesWrap.appendChild(el("div", "errnote", "No notices held — refresh online.")); }
+
+  try { buildYieldCurve(grid); } catch (e) { console.warn("curve:", e); }
+
+  chartCard(grid, "half", "USD/ZAR", "Weighted average of banks' 10:30 rates.", {
+    series: [{ name: "Rand per US dollar", obs: sO("EXCX135D") || [], color: css("--s2"), fill: true }],
+    fmt: "0.00", ranges: ["1Y","5Y","10Y","MAX"], defRange: "5Y", logToggle: true
+  });
+
+  const mb = card(grid, "half", "Current market rates", "The SARB's live rates board. Click a row for history.");
+  try {
+    const rows = [];
+    const all = (D.market || []).concat(D.cpd || []);
+    if (!all.length) throw new Error("no data");
+    let lastSec = null;
+    for (const r of all) {
+      if (r.section !== lastSec) { rows.push(`<tr class="sec"><td colspan="3">${esc(r.section)}</td></tr>`); lastSec = r.section; }
+      const arrow = r.upDown > 0 ? "▲" : r.upDown < 0 ? "▼" : "–";
+      const acls = r.upDown > 0 ? "style='color:var(--bad)'" : r.upDown < 0 ? "style='color:var(--good)'" : "style='color:var(--muted)'";
+      rows.push(`<tr ${prow(r.code, r.fmt)}><td>${esc(r.name)}</td><td class="num"><b>${fmtV(r.value, r.fmt)}</b></td><td class="num"><span ${acls}>${arrow}</span> <span style="color:var(--muted);font-size:11.5px">${esc(r.date)}</span></td></tr>`);
+    }
+    const w = simpleTable(rows, [{h:"Indicator"},{h:"Value",num:1},{h:"Move · date",num:1}]);
+    w.classList.add("tall");
+    mb.cardEl.appendChild(w);
+    addCsv(mb, w, "SARB market rates");
+  } catch (e) { mb.cardEl.appendChild(el("div", "errnote", "Market rates unavailable offline — run the updater or go online.")); }
+
+  const rel = card(grid, "half", "Release register", "What the SARB has published, and how fresh it is.");
+  try {
+    if (!D.releases || !D.releases.length) throw new Error("no data");
+    const rows = D.releases.map(r =>
+      `<tr><td>${esc(r.Indicator)}</td><td class="num">${esc(r.LatestDate)}</td><td class="num" style="color:var(--muted)">${esc(r.LastPeriod)}</td></tr>`);
+    const w = simpleTable(rows, [{h:"Dataset"},{h:"Data up to",num:1},{h:"Released",num:1}]);
+    rel.cardEl.appendChild(w);
+    addCsv(rel, w, "SARB release register");
+  } catch (e) { rel.cardEl.appendChild(el("div", "errnote", "Release register unavailable.")); }
+
+  const oi = card(grid, "half", "Headline indicators", "The SARB's summary ratios. Click a row for history.");
+  try {
+    if (!D.other || !D.other.length) throw new Error("no data");
+    const rows = D.other.map(r => {
+      const deep = S(r.code);
+      let chg = "";
+      if (deep && deep.obs.length > 1) {
+        const prev = deep.obs[deep.obs.length-2][1];
+        if (prev != null && r.value != null) {
+          const diff = r.value - prev;
+          const invert = /debt|deficit|balance as/i.test(r.name);
+          // Only genuine ratios (% of GDP, growth rate) get a "pt" label --
+          // Current account (R millions), import cover (months), M3 and
+          // credit (R millions) are levels, so the change is a plain
+          // number in their own unit, not a percentage-point move.
+          if (/%|growth rate/i.test(r.name)) {
+            chg = upChip(diff, decimalsOf(r.fmt), invert).replace("%", " pt");
+          } else {
+            const good = invert ? diff < 0 : diff > 0;
+            const cls = diff === 0 ? "flat" : (good ? "down" : "up");
+            const sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
+            chg = `<span class="chip ${cls}">${sign}${fmtV(Math.abs(diff), r.fmt)}</span>`;
+          }
+        }
+      }
+      return `<tr ${prow(r.code, r.fmt)}><td>${esc(r.name)}<div style="font-size:11px;color:var(--muted)">${esc(r.code)}</div></td>` +
+        `<td class="num"><b>${fmtV(r.value, r.fmt)}</b></td><td class="num">${esc(r.date || "")} ${chg}</td></tr>`;
+    });
+    const w = simpleTable(rows, [{h:"Indicator"},{h:"Value",num:1},{h:"As at · vs prior",num:1}]);
+    oi.cardEl.appendChild(w);
+    addCsv(oi, w, "SARB headline indicators");
+  } catch (e) { oi.cardEl.appendChild(el("div", "errnote", "Indicators unavailable.")); }
+}
+
+/* ---------- Policy & rates ---------- */
+function buildPolicy(root) {
+  root.appendChild(el("div", "intro",
+    "Where South African interest rates are, how tight policy really is once inflation is subtracted, and how the " +
+    "structure of money-market rates sits around the repo."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  chartCard(grid, "", "Repo & prime lending rate", "Daily policy and prime rates; the 3.5 pp gap is banking convention.", {
+    series: [
+      { name: "Repo rate", obs: stepExtend(sO("MMRD002A") || []), step: true, color: css("--s5"), width: 2.3 },
+      { name: "Prime lending rate", obs: stepExtend(sO("MMRD000A") || []), step: true, color: css("--s1"), width: 2.3 },
+    ],
+    fmt: "0.00", unit: "%", ranges: ["5Y","10Y","MAX"], defRange: "MAX"
+  });
+
+  try {
+    const repoME = monthEndSeries(sO("MMRD002A") || []);
+    const cpi = sO("CPI1000F") || [];
+    const real = spreadSeries(repoME, cpi);
+    chartCard(grid, "half", "Real policy rate", "Repo minus CPI inflation.", {
+      series: [{ name: "Real repo rate", obs: real, color: css("--s5"), fill: true }],
+      fmt: "0.00", unit: "pp", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Deeply negative through 2020-21, firmly positive since — one of the sharpest real tightenings of the inflation-targeting era."
+    });
+  } catch (e) {}
+  chartCard(grid, "half", "Real prime lending rate", "The SARB's long-run real prime series.", {
+    series: [{ name: sName("MMSM001R", "Real prime"), obs: sO("MMSM001R") || [], color: css("--s4"), fill: true }],
+    fmt: "0.00", unit: "%", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX",
+    note: "Negative through much of the 1970s-80s — the era of financial repression — and again briefly in 2020-22."
+  });
+
+  const ncdCodes = ["MMRD303A","MMRD306A","MMRD312A","MMRD403A"].filter(c => S(c));
+  if (ncdCodes.length) chartCard(grid, "half", "NCDs & Jibar", "Bank funding rates across the curve.", {
+    series: ncdCodes.map((c, i) => ({ name: sName(c), obs: sO(c), color: css(PAL[i]) })),
+    fmt: "0.00", unit: "%", ranges: ["1Y","3Y","5Y","MAX"], defRange: "3Y"
+  });
+  const tbCodes = ["MMRD203A","MMRD206A","MMRD209A","MMRD212A"].filter(c => S(c));
+  if (tbCodes.length) chartCard(grid, "half", "Treasury bill tender rates", "Government paper against the repo.", {
+    series: [{ name: "Repo rate", obs: stepExtend(sO("MMRD002A") || []), step: true, color: css("--s5"), dash: true }]
+      .concat(tbCodes.map((c, i) => ({ name: sName(c), obs: sO(c), color: css(PAL[i]) }))),
+    fmt: "0.00", unit: "%", ranges: ["1Y","3Y","5Y","MAX"], defRange: "3Y"
+  });
+
+  const cpd = card(grid, "half", "CPD rates", "Corporation for Public Deposits — the state's cash pool.");
+  try {
+    if (!D.cpd || !D.cpd.length) throw new Error("no data");
+    const w = simpleTable(
+      D.cpd.map(r => `<tr ${prow(r.code, r.fmt)}><td>${esc(r.name)}</td><td class="num"><b>${fmtV(r.value, r.fmt)}%</b></td><td class="num" style="color:var(--muted)">${esc(r.date)}</td></tr>`),
+      [{h:"Rate"},{h:"Value",num:1},{h:"Date",num:1}]);
+    cpd.cardEl.appendChild(w);
+    addCsv(cpd, w, "CPD rates");
+    cpd.cardEl.appendChild(el("div", "note",
+      "The CPD takes call deposits from the public sector and places them in the money market — its rates track repo almost exactly."));
+  } catch (e) { cpd.cardEl.appendChild(el("div", "errnote", "CPD rates unavailable.")); }
+}
+
+/* ---------- Rand & FX ---------- */
+const RAND_PER = /^Rand per/i, PER_RAND = /per Rand$/i;
+function buildFX(root) {
+  root.appendChild(el("div", "intro",
+    "The rand against everything: major pairs with 45 years of history, the trade-weighted indices that filter out " +
+    "dollar noise, realised volatility, and the full cross-rate board."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  chartCard(grid, "", "Rand vs major currencies", "Rand per USD, GBP and EUR since 1980 — log scale recommended.", {
+    series: [
+      { name: "USD", obs: sO("EXCX135D") || [], color: css("--s2") },
+      { name: "GBP", obs: sO("EXCZ001D") || [], color: css("--s1") },
+      { name: "EUR", obs: sO("EXCZ002D") || [], color: css("--s4") },
+    ],
+    fmt: "0.00", ranges: ["1Y","5Y","10Y","MAX"], defRange: "MAX", logToggle: true,
+    note: "Roughly 6% a year of depreciation against the dollar for four decades — a straight line on the log scale — with 1985, 1998, 2001, 2008, 2015 and 2020 as steps off the trend."
+  });
+
+  try {
+    const neer = sO("BOP5393M") || [], reer = sO("BOP5395M") || [];
+    chartCard(grid, "half", "Effective exchange rates", "Trade-weighted nominal and real indices (2015=100).", {
+      series: [
+        { name: "Nominal effective (NEER)", obs: neer, color: css("--s3") },
+        { name: "Real effective (REER)", obs: reer, color: css("--s5"), width: 2.3 },
+      ],
+      fmt: "0.0", ranges: ["5Y","10Y","MAX"], defRange: "MAX", dualAuto: true, logToggle: true,
+      note: "The nominal index falls almost continuously, yet the REER is broadly flat over 50 years — nominal depreciation has largely been inflation catch-up."
+    });
+  } catch (e) {}
+
+  try {
+    const vol = rollingVol(sO("EXCX135D") || [], 30);
+    chartCard(grid, "half", "Rand volatility (30d)", "Realised volatility of USD/ZAR, annualised.", {
+      series: [{ name: "30d realised vol", obs: vol, color: css("--s6"), fill: true }],
+      fmt: "0.0", unit: "%", ranges: ["1Y","5Y","10Y","MAX"], defRange: "10Y",
+      note: "Spikes line up with global stress (2008, 2020) and domestic shocks (Nenegate 2015)."
+    });
+  } catch (e) {}
+
+  try {
+    const t0 = todayUTC() - 5 * YEAR;
+    chartCard(grid, "half", "USD/ZAR vs NEER (indexed)", "Both = 100 five years ago; divergence isolates pure dollar moves.", {
+      series: [
+        { name: "USD per rand (indexed)", obs: index100((sO("EXCX135D") || []).map(o => [o[0], 1/o[1]]), t0), color: css("--s2") },
+        { name: "NEER (indexed)", obs: index100(sO("EER4504A") || [], t0), color: css("--s3") },
+      ],
+      fmt: "0.0", ranges: ["5Y"], defRange: "5Y"
+    });
+  } catch (e) {}
+
+  try {
+    const goldCodes = ["GDPL201D","GDPL203D"].filter(c => S(c));
+    const series = goldCodes.map((c, i) => ({ name: sName(c).replace(/^in /, "Gold in "), obs: sO(c), color: css(i ? "--s6" : "--s3") }));
+    if (series.length) chartCard(grid, "half", "Gold price", "London fixing per fine ounce, daily.", {
+      series, fmt: "#,##0", ranges: ["1Y","5Y","10Y","MAX"], defRange: "10Y", logToggle: true, dualAuto: true
+    });
+  } catch (e) {}
+
+  const fb = card(grid, "", "Exchange-rate board", "Every pair the SARB publishes daily. Green = rand stronger. Click a row for history.");
+  try {
+    if (!D.fxDaily || !D.fxDaily.length) throw new Error("no data");
+    const t1 = todayUTC();
+    const rows = [];
+    let lastSec = null;
+    for (const r of D.fxDaily) {
+      const deep = S(r.code);
+      if (r.section !== lastSec) { rows.push(`<tr class="sec"><td colspan="6">${esc(r.section)}</td></tr>`); lastSec = r.section; }
+      const dir = RAND_PER.test(r.name) ? -1 : PER_RAND.test(r.name) || /effective/i.test(r.name) ? 1 : 0;
+      const cells = [];
+      for (const [lab, dt] of [["1d", null], ["1m", 30], ["YTD", "ytd"], ["1y", 365]]) {
+        let chg = null;
+        if (deep && deep.obs.length > 2) {
+          const cur = lastObs(deep.obs);
+          let ref = null;
+          if (dt === null) ref = deep.obs[deep.obs.length-2];
+          else if (dt === "ytd") ref = obsAtOrBefore(deep.obs, Date.UTC(new Date(t1).getUTCFullYear(), 0, 1) - 1);
+          else ref = obsAtOrBefore(deep.obs, pt(cur[0]) - dt * 86400e3);
+          if (ref && ref[1]) chg = (cur[1]/ref[1] - 1) * 100;
+        }
+        if (chg == null) cells.push(`<td class="num" style="color:var(--muted)">–</td>`);
+        else {
+          const good = dir === 0 ? null : (dir === 1 ? chg > 0 : chg < 0);
+          const col = good == null ? "var(--ink-2)" : good ? "var(--good)" : "var(--bad)";
+          cells.push(`<td class="num" style="color:${col}">${fmtPct(chg, 1)}</td>`);
+        }
+      }
+      rows.push(`<tr ${prow(r.code, r.fmt)}><td>${esc(r.name)}</td><td class="num"><b>${fmtV(r.value, r.fmt)}</b></td>${cells.join("")}</tr>`);
+    }
+    const w = simpleTable(rows, [{h:"Pair"},{h:"Latest",num:1},{h:"1d",num:1},{h:"1m",num:1},{h:"YTD",num:1},{h:"1y",num:1}]);
+    w.classList.add("tall");
+    fb.cardEl.appendChild(w);
+    addCsv(fb, w, "SARB FX board");
+    fb.cardEl.appendChild(el("div", "note",
+      "Pairs quoted <b>rand per X</b> rise when the rand weakens; pairs quoted <b>X per rand</b> rise when it strengthens. " +
+      "Colour always reads in rand terms: green = the rand gained. Cross rates (no rand leg) are left neutral."));
+  } catch (e) { fb.cardEl.appendChild(el("div", "errnote", "FX board unavailable — no data held.")); }
+}
+
+/* ---------- Money & credit ---------- */
+function buildMoney(root) {
+  root.appendChild(el("div", "intro",
+    "The monetary engine room: money supply back to 1965, who is borrowing, what kind of credit, and where the " +
+    "deposits sit."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+  const pct = archiveSeries("MRDMA") ? archiveSeries("MRDMA").filter(s => /Percentage change/i.test(s.catName)) : [];
+  const g = n => { const s = pct.find(x => x.name.trim() === n); return s ? s.obs : []; };
+
+  chartCard(grid, "", "M3 & private-sector credit growth", "12-month growth since 1966.", {
+    series: [
+      { name: "M3 money supply", obs: g("M3"), color: css("--s1"), width: 2.2 },
+      { name: "Private sector credit", obs: g("Claims on the domestic private sector"), color: css("--s5"), width: 2.2 },
+      { name: "Total loans & advances", obs: g("Total loans and advances"), color: css("--s3"), dash: true },
+    ],
+    fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "MAX"
+  });
+
+  try {
+    const agg = archiveSeries("MRDMA").filter(s => /Monetary aggregates/i.test(s.catName));
+    const pick = n => { const s = agg.find(x => x.name.trim() === n); return s ? s.obs : []; };
+    chartCard(grid, "half", "Monetary aggregates", "M0–M3 since 1965, R millions.", {
+      series: [
+        { name: "M0", obs: pick("M0"), color: css("--s3") },
+        { name: "M1", obs: pick("M1"), color: css("--s2") },
+        { name: "M2", obs: pick("M2"), color: css("--s1") },
+        { name: "M3", obs: pick("Total monetary (M3) deposits"), color: css("--s5"), width: 2.3 },
+      ],
+      fmt: "#,##0", unit: "R m", ranges: ["10Y","MAX"], defRange: "MAX", logToggle: true,
+      viewToggle: { def: "lvl" }
+    });
+  } catch (e) {}
+
+  try {
+    const cp = archiveSeries("MRDMA").filter(s => /Counterparts of change/i.test(s.catName));
+    const main = cp.filter(s => !/^-+>/.test(s.name.trim()) && !/^--->/.test(s.name.trim()));
+    chartCard(grid, "half", "Counterparts of M3 (12m flows)", "What is creating money: foreign assets, government, private credit.", {
+      series: main.slice(0, 5).map((s, i) => ({ name: s.name.replace(/:$/, ""), obs: roll12Sum(s.obs), color: css(PAL[i]) })),
+      fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y"
+    });
+  } catch (e) {}
+
+  try {
+    const hh = archByName("CDACSM", /Household/i, /^Total loans and advances/i);
+    const co = archByName("CDACSM", /Corporate/i, /^Total loans and advances/i) || archByName("CDACSM", /Corporate/i, /Claims on the domestic/i);
+    chartCard(grid, "half", "Credit growth: households vs companies", "12-month growth of bank loans to each sector.", {
+      series: [
+        { name: "Households", obs: hh ? yoyFromLevels(hh.obs) : [], color: css("--s2"), width: 2.2 },
+        { name: "Companies", obs: co ? yoyFromLevels(co.obs) : [], color: css("--s4"), width: 2.2 },
+      ],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Household credit growth has run below inflation — real deleveraging — for most of the period since 2016."
+    });
+  } catch (e) {}
+
+  try {
+    const kinds = ["Mortgage advances","Instalment sale credit","Credit card advances","Overdrafts","General loans and advances"];
+    const series = kinds.map((k, i) => {
+      const s = archByName("CDACSM", /Household/i, new RegExp("^" + k, "i"));
+      return s ? { name: k, obs: yoyFromLevels(s.obs), color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Household credit by type", "12-month growth by product.", {
+      series, fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y"
+    });
+  } catch (e) {}
+
+  try {
+    const ds = ["Households","Non-financial companies","Financial companies"].map((k, i) => {
+      const s = archByName("CDADS", /Deposits at the Monetary Sector/i, new RegExp("^" + k, "i"));
+      return s ? { name: k, obs: yoyFromLevels(s.obs), color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Deposit growth by sector", "12-month growth of M3 deposits by holder.", {
+      series: ds, fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y"
+    });
+  } catch (e) {}
+
+  try {
+    const sec = archByName("CDACA", /Securitisation/i, /^Total loans/i) || archByName("CDACA", /Securitisation/i, /^Mortgage/i);
+    if (sec) chartCard(grid, "half", "Securitised credit", sec.name + " moved off bank balance sheets.", {
+      series: [{ name: sec.name, obs: sec.obs, color: css("--s6"), fill: true }],
+      fmt: "#,##0", unit: "R m", ranges: ["10Y","MAX"], defRange: "MAX",
+      viewToggle: { def: "yoy" },
+      note: "Default view is 12-month % change — the level mostly just grows. Switch to Level for the stock."
+    });
+  } catch (e) {}
+}
+
+/* ---------- Capital markets ---------- */
+function buildCapital(root) {
+  root.appendChild(el("div", "intro",
+    "Bond yields back to 1949, the curve against the policy rate, and activity on the JSE's share, bond and " +
+    "derivative markets."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  try {
+    const lb = archByName("MRDCM", /Fixed-interest/i, /Yield on long-term government bonds/i);
+    chartCard(grid, "", "Long-term government bond yield", "Monthly average since 1949.", {
+      series: [{ name: "Long-bond yield", obs: lb ? lb.obs : [], color: css("--s1"), width: 2.2, fill: true }],
+      fmt: "0.00", unit: "%", ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "Single digits in the 1950s-60s, 17%+ in the 1980s inflation, and the long disinflation since — today’s <i>real</i> yield is among the highest in the world."
+    });
+  } catch (e) {}
+
+  const dailyY = ["MMRD708A","MMRD709A","CMJD003A","CMJD004A"].filter(c => S(c));
+  if (dailyY.length) chartCard(grid, "half", "Government bond yields (daily)", "Benchmark closing yields across the curve.", {
+    series: dailyY.map((c, i) => ({ name: sName(c), obs: sO(c), color: css(PAL[i]) })),
+    fmt: "0.00", unit: "%", ranges: ["1Y","3Y","5Y","MAX"], defRange: "3Y"
+  });
+
+  try {
+    const r209 = sO("MMRD709A") || [], repo = sO("MMRD002A") || [];
+    const slope = spreadSeries(r209, repo);
+    chartCard(grid, "half", "Yield curve slope (10y − repo)", "The classic cycle barometer, SA edition.", {
+      series: [{ name: "R209 yield − repo", obs: slope, color: css("--s4"), fill: true }],
+      fmt: "0.00", unit: "pp", zeroLine: true, ranges: ["3Y","5Y","10Y","MAX"], defRange: "10Y",
+      note: "Unusually steep since 2020 — a fiscal-risk premium more than a growth signal."
+    });
+  } catch (e) {}
+
+  try {
+    const shares = archByName("MRDCM", /Share market/i, /Value of shares traded/i);
+    const bonds = archByName("MRDCM", /Fixed-interest/i, /Consideration of bonds traded/i);
+    chartCard(grid, "half", "JSE turnover (12m rolling)", "Traded value: shares vs bonds.", {
+      series: [
+        { name: "Shares (12m)", obs: shares ? roll12Sum(shares.obs) : [], color: css("--s2") },
+        { name: "Bonds (12m)", obs: bonds ? roll12Sum(bonds.obs) : [], color: css("--s1") },
+      ],
+      fmt: "#,##0", unit: "R m", ranges: ["10Y","MAX"], defRange: "MAX", logToggle: true
+    });
+  } catch (e) {}
+
+  try {
+    const sh = archByName("MRDCM", /Non-resident/i, /shares$/i);
+    const bd = archByName("MRDCM", /Non-resident/i, /bonds$/i);
+    chartCard(grid, "half", "Non-resident net purchases (12m)", "Foreign flows into SA shares and bonds.", {
+      series: [
+        { name: "Shares (12m net)", obs: sh ? roll12Sum(sh.obs) : [], color: css("--s2") },
+        { name: "Bonds (12m net)", obs: bd ? roll12Sum(bd.obs) : [], color: css("--s5") },
+      ],
+      fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "MAX",
+      note: "Foreigners have been net sellers of SA equities for most of the past decade — domestic institutions have carried the market."
+    });
+  } catch (e) {}
+
+  try {
+    const gs = D.graphs.MRGCM;
+    if (gs && gs["1"]) {
+      const s = gs["1"][0];
+      chartCard(grid, "half", "JSE share prices", "SARB index of share prices, all classes.", {
+        series: [{ name: s.name, obs: s.obs, color: css("--s3"), fill: true }],
+        fmt: "#,##0", ranges: ["3Y"], defRange: "3Y"
+      });
+    }
+  } catch (e) {}
+}
+
+/* ---------- Government finance ---------- */
+function buildGov(root) {
+  root.appendChild(el("div", "intro",
+    "National government's cash flows — revenue, spending, the deficit and its financing — plus the debt ratios " +
+    "that frame every Budget speech."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+  const s = n => { const x = archByName("MRDFG", /revenue, expenditure/i, new RegExp("^" + n, "i")); return x ? x.obs : []; };
+
+  try {
+    chartCard(grid, "", "Revenue & expenditure (12m rolling)", "Cash-flow totals; the vertical gap is the deficit.", {
+      series: [
+        { name: "Revenue (12m)", obs: roll12Sum(s("Cash-flow revenue")), color: css("--s2"), width: 2.2 },
+        { name: "Expenditure (12m)", obs: roll12Sum(s("Cash-flow expenditure")), color: css("--s5"), width: 2.2 },
+      ],
+      fmt: "#,##0", unit: "R m", ranges: ["5Y","10Y","MAX"], defRange: "MAX",
+      note: "The lines last touched in the late 2000s — the gap since is the arithmetic behind the debt ratio’s climb."
+    });
+  } catch (e) {}
+
+  try {
+    chartCard(grid, "half", "Cash balance", "Monthly balance and the 12-month rolling deficit.", {
+      series: [
+        { name: "Monthly balance", obs: s("Cash-flow balance"), color: css("--s3"), width: 1.2 },
+        { name: "12-month rolling", obs: roll12Sum(s("Cash-flow balance")), color: css("--s5"), width: 2.4 },
+      ],
+      fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Provisional tax lands in June and December — hence the sawtooth; the rolling line strips it out."
+    });
+  } catch (e) {}
+
+  try {
+    const fin = ["Treasury bills and short-term loans","Domestic government bonds","Foreign bonds and loans","Change in cash balances"];
+    const series = fin.map((n, i) => {
+      const x = archByName("MRDFG", /financing/i, new RegExp("^" + n.replace(/[()]/g, "\\$&"), "i"));
+      return x ? { name: n, obs: roll12Sum(x.obs), color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Deficit financing (12m rolling)", "Net issuance by instrument.", {
+      series, fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Spikes in change-in-cash mark deposit drawdowns — including the 2024 GFECRA settlement."
+    });
+  } catch (e) {}
+
+  try {
+    chartCard(grid, "half", "Revenue & expenditure growth (y/y)", "Growth of the 12-month rolling totals.", {
+      series: [
+        { name: "Revenue growth", obs: yoyFromLevels(roll12Sum(s("Cash-flow revenue"))), color: css("--s2"), width: 2.2 },
+        { name: "Expenditure growth", obs: yoyFromLevels(roll12Sum(s("Cash-flow expenditure"))), color: css("--s5"), width: 2.2 },
+      ],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Revenue outgrowing spending is the only sustained route to a smaller deficit."
+    });
+  } catch (e) {}
+
+  const dbt = card(grid, "half", "Debt & balance ratios", "Annual headline ratios. Click a row for full history.");
+  try {
+    const codes = ["KBP4420J","KBP5260J","KBP6286L"].map(c => S(c) ? c : null).filter(Boolean);
+    if (!codes.length) throw new Error("no data");
+    const rows = [];
+    for (const c of codes) {
+      const sr = S(c);
+      rows.push(`<tr class="sec"><td colspan="2">${esc(sr.name)}</td></tr>`);
+      for (const [p, v] of sr.obs.slice(-6).reverse())
+        rows.push(`<tr ${prow(c, sr.fmt)}><td>${esc(p.slice(0,4))}</td><td class="num">${fmtV(v, sr.fmt)}</td></tr>`);
+    }
+    const w = simpleTable(rows, [{h:"Year"},{h:"Value",num:1}]);
+    dbt.cardEl.appendChild(w);
+    addCsv(dbt, w, "SARB debt ratios");
+  } catch (e) { dbt.cardEl.appendChild(el("div", "errnote", "Ratios unavailable.")); }
+}
+
+/* ---------- External sector ---------- */
+function buildExternal(root) {
+  root.appendChild(el("div", "intro",
+    "South Africa's buffer against the world: reserves, import cover, the forex market's daily churn, gold, and the " +
+    "current account."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  try {
+    const gross = archByName("MRDIE", /US \$ millions/i, /^Gross reserves/i);
+    const liq = archByName("MRDIE", /US \$ millions/i, /International liquidity/i);
+    chartCard(grid, "half", "Foreign reserves (US$)", "Gross reserves and the international liquidity position.", {
+      series: [
+        { name: "Gross reserves", obs: gross ? gross.obs : [], color: css("--s1"), width: 2.2 },
+        { name: "Liquidity position", obs: liq ? liq.obs : [], color: css("--s2"), width: 2.2 },
+      ],
+      fmt: "#,##0", unit: "US$ m", ranges: ["5Y","10Y","MAX"], defRange: "MAX",
+      note: "The SARB does not defend the rand — reserves climb slowly and are almost never spent."
+    });
+  } catch (e) {}
+
+  try {
+    const ic = S("KBP5381K");
+    chartCard(grid, "half", "Import cover", "Months of imports the reserves would pay for (quarterly).", {
+      series: [{ name: "Import cover (months)", obs: ic ? ic.obs : [], color: css("--s4"), fill: true }],
+      fmt: "0.0", unit: "months", ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "The IMF’s old rule of thumb is 3 months; SA sits comfortably above it."
+    });
+  } catch (e) {}
+
+  try {
+    const ca = S("KBP5007L");
+    chartCard(grid, "half", "Current account", "Seasonally adjusted, R millions.", {
+      series: [{ name: "Current account", obs: ca ? ca.obs : [], color: css("--s3"), fill: true }],
+      fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX"
+    });
+  } catch (e) {}
+
+  try {
+    const kinds = ["Total spot transactions","Total swap transactions","Total forward transactions"];
+    const series = kinds.map((n, i) => {
+      const x = archByName("MRDIE", /forex market/i, new RegExp("^" + n, "i"));
+      return x ? { name: n.replace("Total ","").replace(" transactions",""), obs: x.obs, color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Forex market turnover", "Net average daily turnover, US$ millions.", {
+      series, fmt: "#,##0", unit: "US$ m", ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "Swaps, not spot, dominate rand trading — the rand is as much a funding vehicle as a trade currency."
+    });
+  } catch (e) {}
+
+  try {
+    const zar = archByName("MRDIE", /fixing price of gold/i, /in Rand/i);
+    const usd2 = archByName("MRDIE", /fixing price of gold/i, /in US dollar/i);
+    chartCard(grid, "", "Gold price (monthly, since 1960)", "London fixing per fine ounce, monthly averages.", {
+      series: [
+        { name: "Gold in rand", obs: zar ? zar.obs : [], color: css("--s6"), width: 2.2 },
+        { name: "Gold in US dollar", obs: usd2 ? usd2.obs : [], color: css("--s3"), width: 2.2 },
+      ],
+      fmt: "#,##0", ranges: ["10Y","MAX"], defRange: "MAX", logToggle: true, dualAuto: true,
+      viewToggle: { def: "lvl" },
+      note: "In rand terms gold has compounded at roughly dollar-gold’s return plus the rand’s depreciation — an exceptional long-run rand hedge."
+    });
+  } catch (e) {}
+}
+
+/* ---------- Real economy ---------- */
+function buildEconomy(root) {
+  root.appendChild(el("div", "intro",
+    "Production, sales and the SARB's composite business-cycle clocks — some series stretch back to 1946 — plus " +
+    "the full SDDS snapshot tables the Bank publishes for the IMF."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  try {
+    const kinds = ["Leading indicator","Coincident indicator","Lagging indicator"];
+    const series = kinds.map((n, i) => {
+      const x = archByName("MRDEI", /Composite business cycle/i, new RegExp("^" + n, "i"));
+      return x ? { name: n, obs: x.obs, color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Business-cycle indicators", "Composite leading, coincident and lagging indices (2019=100).", {
+      series, fmt: "0.0", ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+      note: "Turning points in the leading indicator run roughly 6-12 months ahead of the economy."
+    });
+  } catch (e) {}
+
+  try {
+    const lead = archByName("MRDEI", /Composite business cycle/i, /^Leading/i);
+    chartCard(grid, "half", "Leading indicator (y/y)", "12-month change — an early-warning line.", {
+      series: [{ name: "Leading indicator (y/y)", obs: lead ? yoyFromLevels(lead.obs) : [], color: css("--s1"), fill: true }],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y"
+    });
+  } catch (e) {}
+
+  try {
+    const kinds = [["Gold mining (2019=100)", "Gold mining"], ["Other mining (2019=100)", "Other mining"], ["Manufacturing (2019=100)", "Manufacturing"]];
+    const series = kinds.map(([n, lab], i) => {
+      const x = archByName("MRDEI", /Volume of production/i, new RegExp("^" + n.replace(/[()]/g, "\\$&"), "i"));
+      return x ? { name: lab, obs: x.obs, color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Production volumes", "Physical output indices (2019=100); gold mining starts in 1946.", {
+      series, fmt: "0.0", ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "Gold output is ~85% below its 1970 peak; manufacturing has been flat for a decade."
+    });
+  } catch (e) {}
+
+  try {
+    const kinds = [["Total new vehicle sales", "Vehicle sales"], ["Retail trade", "Retail trade"], ["Wholesale trade", "Wholesale trade"]];
+    const series = kinds.map(([n, lab], i) => {
+      const x = archByName("MRDEI", /Sales/i, new RegExp("^" + n, "i"));
+      return x ? { name: lab, obs: yoyFromLevels(x.obs), color: css(PAL[i]) } : null;
+    }).filter(Boolean);
+    chartCard(grid, "half", "Sales momentum (y/y)", "12-month growth in vehicle sales and trade volumes.", {
+      series, fmt: "0.0", unit: "%", zeroLine: true, ranges: ["5Y","10Y","MAX"], defRange: "10Y", dualAuto: true,
+      note: "The 2021 vehicle-sales base effect sits on its own right-hand scale — use the legend L/R tags to rearrange."
+    });
+  } catch (e) {}
+
+  try {
+    const gdp = S("KBP6006S");
+    chartCard(grid, "half", "Real GDP growth", "Annual growth in real gross domestic product.", {
+      series: [{ name: "Real GDP growth", obs: gdp ? gdp.obs : [], color: css("--s2"), fill: true }],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX"
+    });
+  } catch (e) {}
+
+  chartCard(grid, "half", "CPI & PPI inflation", "Producer prices tend to lead consumer prices by a few months.", {
+    series: [
+      { name: "CPI (y/y)", obs: sO("CPI1000F") || [], color: css("--s5"), width: 2.2 },
+      { name: "PPI (y/y)", obs: sO("PPI1000F") || [], color: css("--s3") },
+    ],
+    fmt: "0.0", unit: "%", zeroLine: true, band: { y0: 3, y1: 6 }, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+    note: "Shaded band = the 3-6% target; the MPC now aims at the 3% lower edge."
+  });
+
+  const sd = D.sdds;
+  if (sd) {
+    const secs = [["real","Real sector (SDDS)"],["financial","Financial sector (SDDS)"],["external","External sector (SDDS)"],["fiscal","Fiscal sector (SDDS)"],["population","Population"]];
+    for (const [key, label] of secs) {
+      const rows = sd[key];
+      if (!rows || !rows.length) continue;
+      const cc = card(grid, "half", label, "Latest official snapshot" + (sd.lastUpdate ? " · updated " + esc(sd.lastUpdate) : "") + ". Click a row for history.");
+      try {
+        // The SARB sometimes lists two genuinely different indicators under
+        // the exact same label within one section, with no distinguishing
+        // description from the API at all -- e.g. two "Grants" codes (one
+        // revenue-side, one expense-side), or IIP items appearing once
+        // under "Assets" and once under "Liabilities". These are real,
+        // different series, not duplicates to collapse. Verified by
+        // reading each code's position in its table (checked directly
+        // against the live API, not guessed) -- extend this map if new
+        // duplicate pairs turn up in other sections; anything not yet
+        // verified here just shows its bare code instead of a wrong guess.
+        const SDDS_DUP_TAG = {
+          GCK1300Q: "receipts", GCH1300Q: "receipts",       // Grants -- revenue side
+          GCK2600Q: "payments", GCH2600Q: "payments",       // Grants -- expense side
+          BOP3001Q: "assets", BOP3002Q: "assets", BOP3003Q: "assets",
+          BOP3004Q: "assets", BOP3013Q: "assets", BOP3005Q: "assets",
+          BOP3007Q: "liabilities", BOP3008Q: "liabilities", BOP3009Q: "liabilities",
+          BOP3010Q: "liabilities", BOP3014Q: "liabilities", BOP3011Q: "liabilities",
+          NGD1000A: "domestic, marketable", NGD2000A: "domestic, marketable",
+          NGD2002A: "domestic", NGD2003A: "domestic",
+          NGD1500A: "domestic, non-marketable", NGD2500A: "domestic, non-marketable",
+          NGD5101A: "foreign", NGD5102A: "foreign",
+        };
+        const nameCounts = {};
+        for (const r of rows) { const k = (r.section||"").trim() + "|" + (r.name||""); nameCounts[k] = (nameCounts[k]||0) + 1; }
+        const trs = [];
+        let lastSec = null;
+        for (const r of rows) {
+          const sec = (r.section || "").trim();
+          if (sec !== lastSec) { trs.push(`<tr class="sec"><td colspan="3">${esc(sec)}</td></tr>`); lastSec = sec; }
+          // Rising is "bad" (red) only for genuine inflation/unemployment
+          // readings -- match those narrowly. "GDP at current prices" and
+          // similar section names contain "prices" but describe a GDP
+          // level's price basis, not an inflation number; a loose /price/i
+          // match was wrongly inverting colour for ordinary GDP growth.
+          const invert = /unemploy|inflation/i.test(sec + r.name) || /^price indices$/i.test(sec.trim());
+          const chg = r.chg != null ? upChip(r.chg, 1, invert) : "";
+          const isDup = nameCounts[sec + "|" + (r.name||"")] > 1;
+          const dupTag = isDup ? (SDDS_DUP_TAG[r.code] || r.code) : "";
+          const codeTag = dupTag ? ` <span style="color:var(--muted);font-size:11px">(${esc(dupTag)})</span>` : "";
+          trs.push(`<tr ${prow(r.code, r.fmt)}><td>${esc(r.name)}${codeTag}${r.unit ? ` <span style="color:var(--muted);font-size:11px">${esc(r.unit)}</span>` : ""}</td>` +
+            `<td class="num"><b>${fmtV(r.value, r.fmt)}</b></td><td class="num">${chg}</td></tr>`);
+        }
+        const w = simpleTable(trs, [{h:"Indicator"},{h:"Latest",num:1},{h:"Change",num:1}]);
+        w.classList.add("tall");
+        cc.cardEl.appendChild(w);
+        addCsv(cc, w, label);
+      } catch (e) { cc.cardEl.appendChild(el("div", "errnote", "Unavailable.")); }
+    }
+  }
+}
+
+/* ---------- Market operations (MCM) ---------- */
+function mcmLines(xml) {
+  try {
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    return [...doc.querySelectorAll("Line")].map(l => [...l.querySelectorAll("Column")].map(c => c.textContent.trim()));
+  } catch (e) { return []; }
+}
+// Some categories (e.g. STRIP bond valuations) publish placeholder
+// notices where every value is "N/A 0.00" -- detect and skip those.
+function mcmJunky(xml) {
+  const cells = mcmLines(xml).flat().map(c => c.trim()).filter(c => c);
+  if (!cells.length) return true;
+  const junk = cells.filter(c => /^(N\/A|0(\.0+)?|-|–)$/i.test(c) || /^(N\/A\s*)+[\d.\s]*$/i.test(c)).length;
+  return junk / cells.length > 0.45;
+}
+function mcmTable(xml) {
+  const lines = mcmLines(xml);
+  const wrap = el("div", "scrollwrap");
+  const tb = el("table", "data");
+  const body = el("tbody");
+  for (const cols of lines) {
+    if (!cols.some(c => c)) continue;
+    const tr = el("tr");
+    tr.innerHTML = cols.map(c => `<td>${/^-?[\d\s  .,%]+$/.test(c) && c.trim() ? `<span class="num" style="font-variant-numeric:tabular-nums">${esc(c)}</span>` : esc(c)}</td>`).join("");
+    body.appendChild(tr);
+  }
+  tb.appendChild(body);
+  wrap.appendChild(tb);
+  return wrap;
+}
+// A category is "active" if its newest CONTRIBUTION is recent -- the
+// register's own lastupdate field is unreliable (TBILL says 2019 while
+// holding a tender dated this week).
+function mcmNewest(id) {
+  const rows = (D.mcm && D.mcm.contributions && D.mcm.contributions[id]) || [];
+  let d = "";
+  for (const r of rows) if (r && r.Date && r.Date > d) d = r.Date;
+  return d.slice(0, 10);
+}
+function buildOps(root) {
+  root.appendChild(el("div", "intro",
+    "The SARB's money-market desk in its own words: auction invitations and results, valuation rates, and switch " +
+    "operations. Categories are split by whether the desk still uses them — several are historical relics."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+  const mcm = D.mcm;
+  if (!mcm || !mcm.categories || !mcm.categories.length) {
+    grid.appendChild(el("div", "card errnote", "Money-market operations data unavailable — refresh online or run the updater."));
+    return;
+  }
+  const today = new Date(todayUTC()).toISOString().slice(0, 10);
+  const ageDays = d => d ? Math.round((pt(today) - pt(d)) / 86400e3) : 99999;
+  const cats = mcm.categories.map(c => {
+    const newest = mcmNewest(c.id);
+    const rows = (mcm.contributions[c.id] || []).slice().sort((a, b) => (a.Date || "") < (b.Date || "") ? 1 : -1);
+    const usable = rows.filter(r => r && r.Date && !mcmJunky(r.XMLData) && ageDays((r.Date || "").slice(0, 10)) <= 180);
+    return { c, newest, rows, usable };
+  }).filter(x => x.rows.length).sort((a, b) => a.newest < b.newest ? 1 : -1);
+  // A category only earns an active card if it's both recent AND actually
+  // has real values to show -- STRIPBOND, for example, is updated daily
+  // but every notice is an all-N/A placeholder, so it belongs in dormant.
+  const active = cats.filter(x => x.usable.length && ageDays(x.newest) <= 60);
+  const dormant = cats.filter(x => !(x.usable.length && ageDays(x.newest) <= 60));
+
+  for (const { c, newest, usable } of active) {
+    const cc = card(grid, "half", c.description, "Latest notice " + esc(newest));
+    const body = el("div", "scrollwrap");
+    cc.cardEl.appendChild(body);
+    for (const r of usable.slice(0, 2)) body.appendChild(mcmTable(r.XMLData));
+  }
+
+  if (dormant.length) {
+    const dc = card(grid, "", "Dormant categories", "No notices in the last 60 days — kept for the record.");
+    const det = el("details", "dormant");
+    det.appendChild(el("summary", null, dormant.length + " dormant categories — expand to view"));
+    const sel = el("select");
+    sel.style.cssText = "padding:6px 10px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;margin:8px 0";
+    for (const { c, newest } of dormant) sel.appendChild(new Option(`${c.description} — last notice ${newest || "unknown"}`, c.id));
+    const mountEl = el("div");
+    const render = () => {
+      mountEl.innerHTML = "";
+      const rows = (mcm.contributions[sel.value] || []).slice().sort((a, b) => (a.Date || "") < (b.Date || "") ? 1 : -1);
+      for (const r of rows.slice(0, 3)) {
+        mountEl.appendChild(el("div", "annc", `<div class="d">${esc((r.Date || "").slice(0, 10))}</div>`));
+        mountEl.appendChild(mcmTable(r.XMLData));
+      }
+    };
+    sel.onchange = render;
+    det.appendChild(sel);
+    det.appendChild(mountEl);
+    det.addEventListener("toggle", () => { if (det.open && !mountEl.childNodes.length) render(); });
+    dc.cardEl.appendChild(det);
+  }
+}
+
+/* ---------- Explorer ---------- */
+let exSel = [], exDerivedN = 0;
+function catalog() {
+  if (catalog._c) return catalog._c;
+  const out = [];
+  for (const dt of Object.keys(D.monthly || {})) {
+    for (const s of D.monthly[dt]) {
+      out.push({ id: `m|${dt}|${s.cat}|${s.code}`, group: RELEASE_NAMES[dt] || dt, cat: s.catName,
+        name: s.name.replace(/^-+>\s*/, "· "), code: s.code, obs: s.obs, fmt: s.fmt, desc: s.desc });
+    }
+  }
+  for (const code of Object.keys(D.daily || {})) {
+    const s = D.daily[code];
+    const isDaily = s.obs.length && s.obs[0][0].length >= 10;
+    const isKBP = /^KBP\d/.test(code);
+    const group = isKBP ? "Quarterly Bulletin gap-fill (credit card, bond yields)"
+      : isDaily ? "Daily rates & FX (full history)" : "Inflation & headline indicators (full history)";
+    out.push({ id: `d|${code}`, group, cat: "", name: s.name, code, obs: s.obs, fmt: s.fmt, desc: s.desc });
+  }
+  for (const s of out) s.freq = inferFreq(s.obs);
+  catalog._c = out;
+  return out;
+}
+function transform(obs, kind) {
+  if (kind === "yoy") {
+    if (obs.length && obs[0][0].length >= 10) {
+      const out = [];
+      for (const [p, v] of obs) {
+        const ref = obsAtOrBefore(obs, pt(p) - 365 * 86400e3);
+        if (ref && ref[1] && pt(p) - pt(ref[0]) < 380 * 86400e3) out.push([p, (v/ref[1] - 1) * 100]);
+      }
+      return out;
+    }
+    return yoyFromLevels(obs);
+  }
+  if (kind === "mom") return momFromLevels(obs);
+  if (kind === "sum12") return roll12Sum(obs);
+  if (kind === "idx") return index100(obs, null);
+  return obs;
+}
+/* ----- formula engine: arbitrary arithmetic over selected series -----
+   Series are addressed by letter in selection order (a, b, c, ...).
+   Timeline = the first-referenced series; every other series is
+   step-held onto its dates, so mixed frequencies line up. */
+function parseFormula(src) {
+  let i = 0;
+  const ws = () => { while (i < src.length && src[i] === " ") i++; };
+  function expr() {
+    let n = term();
+    for (;;) { ws(); const c = src[i]; if (c === "+" || c === "-") { i++; n = { op: c, l: n, r: term() }; } else return n; }
+  }
+  function term() {
+    let n = fact();
+    for (;;) { ws(); const c = src[i]; if (c === "*" || c === "/") { i++; n = { op: c, l: n, r: fact() }; } else return n; }
+  }
+  function fact() {
+    ws();
+    const c = src[i];
+    if (c === "(") { i++; const n = expr(); ws(); if (src[i] !== ")") throw new Error("missing )"); i++; return n; }
+    if (c === "-") { i++; return { op: "neg", l: fact() }; }
+    if (/[0-9.]/.test(c)) { let j = i; while (j < src.length && /[0-9.]/.test(src[j])) j++; const num = parseFloat(src.slice(i, j)); i = j; return { num }; }
+    if (/[a-z]/i.test(c)) { i++; return { v: c.toLowerCase() }; }
+    throw new Error("unexpected '" + (c || "end") + "'");
+  }
+  const n = expr();
+  ws();
+  if (i < src.length) throw new Error("unexpected '" + src[i] + "'");
+  return n;
+}
+function evalNode(n, get) {
+  if (n.num != null) return n.num;
+  if (n.v) return get(n.v);
+  if (n.op === "neg") { const a = evalNode(n.l, get); return a == null ? null : -a; }
+  const a = evalNode(n.l, get), b = evalNode(n.r, get);
+  if (a == null || b == null) return null;
+  if (n.op === "+") return a + b;
+  if (n.op === "-") return a - b;
+  if (n.op === "*") return a * b;
+  if (n.op === "/") return b === 0 ? null : a / b;
+  return null;
+}
+function formulaSeries(src, sel) {
+  const ast = parseFormula(src);
+  const used = [];
+  (function walk(n) { if (!n || typeof n !== "object") return; if (n.v && !used.includes(n.v)) used.push(n.v); walk(n.l); walk(n.r); })(ast);
+  if (!used.length) throw new Error("reference at least one series letter (a, b, …)");
+  for (const u of used) {
+    const k = u.charCodeAt(0) - 97;
+    if (k < 0 || k >= sel.length) throw new Error("'" + u + "' is not a selected series");
+  }
+  const base = sel[used[0].charCodeAt(0) - 97];
+  const out = [];
+  for (const [p, vv] of base.obs) {
+    const t = pt(p);
+    const get = v => {
+      const s = sel[v.charCodeAt(0) - 97];
+      if (s === base) return vv;
+      const o = obsAtOrBefore(s.obs, t);
+      return o ? o[1] : null;
+    };
+    const r = evalNode(ast, get);
+    if (r != null && isFinite(r)) out.push([p, r]);
+  }
+  if (!out.length) throw new Error("no overlapping observations");
+  return out;
+}
+/* ---------- Glossary: plain-English decoder for the catalogue's jargon ----------
+   The full ~2320-code catalogue mostly carries the SARB's own (already fairly
+   descriptive) series names -- what's missing for a newcomer is the acronyms
+   and institutional concepts those names lean on. Rather than hand-write a
+   blurb per series (infeasible at this scale, and unnecessary where the SARB's
+   own wording is already plain), this is a compact, reusable term dictionary
+   that gets matched against whatever text is being shown and surfaced as
+   inline hints -- one definition covers every series that uses that term. */
+const GLOSSARY = [
+  ["Policy & rates", [
+    ["Repo rate", "The rate at which the SARB lends cash to commercial banks against collateral in its weekly repo auctions — the primary lever of monetary policy and the anchor for every other rate on this dashboard."],
+    ["Prime lending rate", "The reference rate banks quote most retail and business loans off; moves in lockstep with the repo rate, conventionally 3.5 percentage points above it."],
+    ["MPC", "Monetary Policy Committee — the SARB body that meets roughly every two months to set the repo rate based on the inflation outlook."],
+    ["Real interest rate", "A nominal rate minus inflation — shows whether policy is actually tight (positive) or loose (negative) once rising prices are accounted for."],
+    ["Bank rate", "The SARB's standing-facility rate for overnight lending to banks outside the weekly repo tender; moves with the repo rate."],
+  ]],
+  ["Money markets & bank funding", [
+    ["Jibar", "Johannesburg Interbank Average Rate — the rate banks lend to each other unsecured; the benchmark most floating-rate loans and derivatives are priced off."],
+    ["Sabor", "South African Benchmark Overnight Rate — the overnight interbank funding rate, a short-term cousin of Jibar."],
+    ["Zaronia", "The overnight rate on actual repo transactions collateralised by government securities; replacing Jibar as SA's preferred risk-free benchmark, in line with the global shift to overnight rates after Libor."],
+    ["NCD", "Negotiable Certificate of Deposit — a tradeable fixed-term deposit banks issue to raise wholesale funding; its quoted rate reflects bank funding costs at that term."],
+    ["T-bill", "Treasury bill — short-term government debt (up to a year) sold at a discount through the National Treasury's weekly tender; the closest thing SA has to a risk-free money-market rate."],
+    ["Bankers' acceptance", "A short-term, bank-guaranteed IOU historically used to fund trade finance; still tracked as a money-market rate (ticker: BA)."],
+    ["CPD", "Corporation for Public Deposits — the state's own cash-management arm; takes deposits from public entities and places them in the money market at rates that track repo closely."],
+  ]],
+  ["Bonds & yield curve", [
+    ["YTM", "Yield to maturity — the annualised return an investor gets holding a bond to maturity at its current market price; the standard way bond yields are quoted."],
+    ["NACS", "Nominal Annual Compounded Semi-annually — the JSE's compounding convention for quoting bond yields; T-bill yields on this dashboard are converted to this basis so they can be compared to bonds directly."],
+    ["Basis point", "One hundredth of a percentage point (0.01%) — the standard unit for describing rate moves too small to discuss in whole percent (abbreviated bp)."],
+    ["Yield curve", "Yields plotted against maturity at a point in time; its slope is a classic signal of growth and risk expectations — steep usually means growth (or a risk premium) ahead, inverted often precedes a slowdown."],
+    ["GOVI", "The JSE/SARB government bond total-return index, tracking the all-bond market's price and income return together."],
+    ["Strip bond", "A bond stripped into separate coupon and principal payments, each tradeable on its own — a niche instrument occasionally seen on the Market Operations desk notices."],
+    ["Gilt switch", "The Treasury swapping investors out of a maturing (or unpopular) bond into another, smoothing the redemption profile without needing fresh cash."],
+  ]],
+  ["Monetary aggregates & credit", [
+    ["M1", "The narrowest money-supply measure — cash in circulation plus demand (transaction) deposits."],
+    ["M2", "M1 plus short-term and ordinary savings deposits."],
+    ["M3", "The broadest official money-supply measure — M2 plus longer-term deposits; M3 growth is the SARB's main money-supply watch metric."],
+    ["PSCE", "Private Sector Credit Extension — total bank lending to households and companies; a leading indicator of both economic activity and financial-stability risk."],
+    ["Counterparts of M3", "The balance-sheet items (credit extension, net foreign assets, government deposits, etc.) that mechanically explain what drove M3 up or down in a given month."],
+    ["Securitisation", "Bundling loans (e.g. mortgages, vehicle finance) into tradeable securities — tracked separately since it moves credit off bank balance sheets without new lending."],
+  ]],
+  ["Inflation", [
+    ["CPI", "Consumer Price Index — the basket-of-goods measure of price change facing consumers; South Africa's targeted (headline) inflation measure."],
+    ["PPI", "Producer Price Index — price change at the factory/farm gate, upstream of CPI; often a leading indicator for where consumer inflation is headed."],
+    ["Inflation target", "The SARB's mandated 3-6% band for CPI inflation (informally anchored near the midpoint) — the reason the MPC meets and sets the repo rate."],
+    ["Core inflation", "CPI excluding volatile items like food and energy (also called CPIX) — used to judge underlying price pressure separate from one-off shocks."],
+  ]],
+  ["External sector & FX", [
+    ["BOP", "Balance of Payments — the full record of SA's transactions with the rest of the world, split into the current, capital and financial accounts."],
+    ["Current account", "Trade in goods and services plus income and transfers — a deficit means SA is a net borrower from the rest of the world that period."],
+    ["Financial account", "Cross-border investment flows (direct, portfolio, other) that finance the current-account balance."],
+    ["IIP", "International Investment Position — SA's stock of foreign assets minus foreign liabilities at a point in time; the balance-sheet counterpart to the BOP's flow measures."],
+    ["NEER", "Nominal Effective Exchange Rate — the rand's trade-weighted value against a basket of trading-partner currencies; a rise means broad rand strength, not just against one currency."],
+    ["REER", "Real Effective Exchange Rate — NEER adjusted for relative inflation; the better gauge of whether the rand is cheap or expensive for actual competitiveness."],
+    ["Import cover", "Months of imports the gross reserves could pay for if all other inflows stopped — a traditional (if blunt) reserve-adequacy yardstick."],
+    ["GFECRA", "Gold and Foreign Exchange Contingency Reserve Account — absorbs valuation gains/losses on the SARB's gold and FX reserves; its 2024 partial settlement to fund government spending is the \"GFECRA settlement\" referenced in the deficit-financing chart."],
+  ]],
+  ["Government finance", [
+    ["GFS", "Government Finance Statistics — the IMF-standardised framework the SARB's fiscal tables follow, splitting government cash flows into revenue, expenditure and financing by instrument."],
+    ["Budget balance", "Revenue minus expenditure over a period; negative (a deficit) means government borrowed to cover the gap."],
+    ["Primary balance", "The budget balance excluding interest payments on existing debt — shows whether policy itself (not the debt legacy) is tightening or loosening."],
+    ["PSBR", "Public Sector Borrowing Requirement — the cash government (and sometimes the wider public sector) needs to raise from markets to cover its deficit."],
+    ["Debt-to-GDP", "Government debt as a share of the whole economy's output — the standard cross-country gauge of fiscal sustainability."],
+  ]],
+  ["Real economy & national accounts", [
+    ["GDP", "Gross Domestic Product — the total value of goods and services produced in SA; its growth rate is the single most-watched real-economy number."],
+    ["GNI", "Gross National Income — GDP plus net income SA residents earn from abroad (or pay abroad); the better measure of what South Africans actually earn, versus what's produced within the borders."],
+    ["Gross saving", "The share of GDP not consumed — the domestic pool available (before foreign financing) to fund investment."],
+    ["Seasonally adjusted", "Data with predictable within-year patterns (e.g. December retail spikes) removed so period-to-period comparisons reflect the underlying trend, not the calendar."],
+  ]],
+  ["Institutional & market operations", [
+    ["Desk notices", "Daily announcements from the SARB's Market Operations desk: repo auction invitations/results, bond and T-bill auction results, money-market liquidity summaries."],
+    ["Main repo", "The SARB's primary weekly repo auction that supplies the bulk of banks' liquidity needs at the policy rate."],
+    ["Money market summary", "The desk's daily snapshot of systemic liquidity: notes and coin in circulation, government's cash balances at the SARB, and other liquidity drivers."],
+  ]],
+  ["Data & methodology", [
+    ["SDDS", "Special Data Dissemination Standard — the IMF's data-transparency standard; the SARB's SDDS tables (real, financial, external, fiscal sectors) follow this internationally comparable structure."],
+    ["KBP code", "The Quarterly Bulletin's internal numbering scheme for its ~2,300 published time series; the full-catalogue series on this dashboard are fetched and labelled by these codes when no friendlier name exists."],
+    ["YoY", "Year-on-year — percentage change versus the same point 12 months earlier; the standard way to strip seasonal noise out of a level series."],
+    ["MoM", "Month-on-month — percentage change versus the prior month."],
+  ]],
+];
+const GLOSSARY_FLAT = GLOSSARY.flatMap(([group, terms]) => terms.map(([term, def]) => ({ group, term, def })));
+const GLOSSARY_MATCHERS = GLOSSARY_FLAT
+  .slice()
+  .sort((a, b) => b.term.length - a.term.length)
+  .map(g => ({ ...g, re: new RegExp(`(?:^|[^a-z0-9])(${g.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?:$|[^a-z0-9])`, "i") }));
+function glossaryHints(text) {
+  if (!text) return [];
+  const found = [], seen = new Set();
+  for (const g of GLOSSARY_MATCHERS) {
+    if (seen.has(g.term)) continue;
+    if (g.re.test(text)) { found.push(g); seen.add(g.term); }
+  }
+  return found.slice(0, 3);
+}
+function exHoverText(s) {
+  // KBP catalogue entries carry only one text field from the SARB (LongDesc),
+  // already used as the series name -- long enough on its own to answer "what
+  // does this measure" without a redundant second line. The generic fallback
+  // is only worth showing for short, cryptic names that genuinely lack one.
+  const selfDescriptive = !s.desc && s.name && s.name.length > 45;
+  const def = s.desc || (selfDescriptive ? null : (s.cat ? `${s.cat} — part of the "${s.group}" release. No official description published for this series.` :
+    `Part of "${s.group}". No official description published for this series.`));
+  const range = s.obs && s.obs.length ? `${s.obs[0][0]} → ${s.obs[s.obs.length-1][0]} · ${s.obs.length} obs` : "no data";
+  const hints = glossaryHints(`${s.name} ${def || ""}`);
+  const hintsHtml = hints.length ? `<div style="max-width:280px;margin-top:5px;padding-top:5px;border-top:1px solid var(--grid)">` +
+    hints.map(h => `<div style="font-size:11px;margin-top:2px"><b>${esc(h.term)}</b> — ${esc(h.def)}</div>`).join("") + `</div>` : "";
+  return `<div class="tt-t">${esc(s.name)}</div>` + (def ? `<div style="max-width:280px">${esc(def)}</div>` : "") +
+    `<div style="color:var(--muted);margin-top:4px;font-size:11.5px">${esc(s.code)} · ${esc(range)}</div>` + hintsHtml;
+}
+function buildExplorer(root) {
+  root.appendChild(el("div", "intro",
+    "Every series in the held archives — plus any SARB timeseries code fetched live. Hover a series for its " +
+    "definition. Select any number, transform them, choose a chart style, place series on either axis (legend " +
+    "L/R tags), or type a formula over them (a, b, c… in selection order)."));
+  const wrap = el("div", "explorer");
+  root.appendChild(wrap);
+  const list = el("div", "exlist");
+  const main = el("div");
+  wrap.appendChild(list); wrap.appendChild(main);
+
+  const search = el("input");
+  search.type = "search"; search.placeholder = "Search " + catalog().length + " series…";
+  list.appendChild(search);
+  const filterRow = el("div");
+  filterRow.style.cssText = "display:flex;gap:6px;margin:6px 0 8px";
+  const typeSel = el("select");
+  const freqSel = el("select");
+  const fSelStyle = "flex:1;min-width:0;padding:5px 6px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px";
+  typeSel.style.cssText = fSelStyle; freqSel.style.cssText = fSelStyle;
+  typeSel.appendChild(new Option("All types", ""));
+  for (const g of [...new Set(catalog().map(s => s.group))].sort()) typeSel.appendChild(new Option(g.length > 38 ? g.slice(0, 37) + "…" : g, g));
+  freqSel.appendChild(new Option("All frequencies", ""));
+  for (const f of ["Daily", "Weekly", "Monthly", "Quarterly", "Annual"]) freqSel.appendChild(new Option(f, f));
+  filterRow.appendChild(typeSel); filterRow.appendChild(freqSel);
+  list.appendChild(filterRow);
+  const items = el("div");
+  list.appendChild(items);
+
+  const chipRow = el("div", "selchips");
+  const ctrl = el("div", null);
+  ctrl.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px";
+  const selStyle = "padding:5px 9px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;font-size:13px";
+  const tsel = el("select");
+  tsel.style.cssText = selStyle;
+  for (const [v, l] of [["lvl","Level"],["yoy","12-month % change"],["mom","1-month % change"],["sum12","12-month rolling sum"],["idx","Index = 100 at start"]])
+    tsel.appendChild(new Option(l, v));
+  ctrl.appendChild(tsel);
+  const stySel = el("select");
+  stySel.style.cssText = selStyle;
+  for (const [v, l] of [["line","Line"],["area","Area"],["bar","Bars"],["scatter","Scatter"],["stackbar","Stacked bars"],["stackarea","Stacked area"]]) stySel.appendChild(new Option(l, v));
+  ctrl.appendChild(stySel);
+  const fetchBox = el("input");
+  fetchBox.placeholder = "any SARB code, e.g. KBP6006S";
+  fetchBox.style.cssText = selStyle + ";width:170px";
+  const fetchBtn = el("button", "minibtn", "fetch live ↯");
+  ctrl.appendChild(fetchBox); ctrl.appendChild(fetchBtn);
+  // formula row
+  const frow = el("div", null);
+  frow.style.cssText = "display:none;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px";
+  const fBox = el("input");
+  fBox.placeholder = "formula, e.g. a-b or 100*a/b or (a+b)/2";
+  fBox.style.cssText = selStyle + ";width:260px;font-family:Consolas,monospace";
+  const fBtn = el("button", "minibtn", "plot formula ⊕");
+  const fHint = el("span", null, "<span style='color:var(--muted);font-size:12px'>letters = selected series in order; result becomes a new chip (remove the sources to see it alone)</span>");
+  frow.appendChild(fBox); frow.appendChild(fBtn); frow.appendChild(fHint);
+  main.appendChild(chipRow);
+  main.appendChild(ctrl);
+  main.appendChild(frow);
+  const chartMount = el("div", "card");
+  main.appendChild(chartMount);
+
+  function renderList() {
+    const q = search.value.trim().toLowerCase();
+    const typeF = typeSel.value, freqF = freqSel.value;
+    items.innerHTML = "";
+    let lastG = null, lastC = null, n = 0;
+    for (const s of catalog()) {
+      if (q && !(s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q) || (s.cat||"").toLowerCase().includes(q) || s.group.toLowerCase().includes(q))) continue;
+      if (typeF && s.group !== typeF) continue;
+      if (freqF && s.freq !== freqF) continue;
+      if (++n > 400) break;
+      if (s.group !== lastG) { items.appendChild(el("div", "exgroup", esc(s.group))); lastG = s.group; lastC = null; }
+      if (s.cat && s.cat !== lastC) { items.appendChild(el("div", "excat", esc(s.cat))); lastC = s.cat; }
+      const b = el("button", "exitem" + (exSel.some(x => x.id === s.id) ? " on" : ""));
+      const freq = s.freq;
+      b.innerHTML = `${esc(s.name)} <span class="code">${esc(s.code)}</span>${freq ? ` <span class="freqtag">${freq}</span>` : ""}`;
+      b.addEventListener("pointerenter", e => showTip(e.clientX, e.clientY, exHoverText(s)));
+      b.addEventListener("pointermove", e => showTip(e.clientX, e.clientY, exHoverText(s)));
+      b.addEventListener("pointerleave", hideTip);
+      b.onclick = () => { hideTip(); toggleSel(s); };
+      items.appendChild(b);
+    }
+    if (!n) items.appendChild(el("div", "errnote", "No matches."));
+  }
+  function toggleSel(s) {
+    const i = exSel.findIndex(x => x.id === s.id);
+    if (i >= 0) exSel.splice(i, 1); else exSel.push(s);
+    renderList(); renderChart();
+  }
+  function renderChart() {
+    chipRow.innerHTML = "";
+    exSel.forEach((s, i) => {
+      const ch = el("span", "selchip");
+      const letter = i < 26 ? String.fromCharCode(97 + i) : "·";
+      ch.innerHTML = `<b style="color:var(--accent);font-family:Consolas,monospace">${letter}</b>` +
+        `<span class="sw" style="background:${css(PAL[i % PAL.length])}"></span>${esc(s.name.slice(0, 46))}`;
+      ch.title = s.desc || s.name;
+      const x = el("button", null, "✕");
+      x.onclick = () => { exSel.splice(exSel.indexOf(s), 1); renderList(); renderChart(); };
+      ch.appendChild(x);
+      chipRow.appendChild(ch);
+    });
+    frow.style.display = exSel.length >= 1 ? "flex" : "none";
+    chartMount.innerHTML = "";
+    if (!exSel.length) {
+      chartMount.appendChild(el("div", "errnote", "Select series on the left to chart them here."));
+      return;
+    }
+    const kind = tsel.value;
+    const head = el("div", "cardhead");
+    head.appendChild(el("h3", null, exSel.length === 1 ? esc(exSel[0].name) : exSel.length + " series"));
+    const tools = el("div", "tools");
+    head.appendChild(tools);
+    chartMount.appendChild(head);
+    if (exSel.length === 1 && exSel[0].desc) chartMount.appendChild(el("div", "cardsub", esc(exSel[0].desc)));
+    try {
+      new Chart(chartMount, {
+        title: exSel.map(s => s.name).join(" + ").slice(0, 120),
+        series: exSel.map((s, i) => ({ name: s.name, obs: transform(s.obs, kind), color: css(PAL[i % PAL.length]), dash: i >= PAL.length })),
+        fmt: kind === "lvl" ? (exSel.length === 1 ? exSel[0].fmt : null) : (kind === "sum12" ? "#,##0" : "0.0"),
+        unit: kind === "yoy" || kind === "mom" ? "%" : undefined,
+        zeroLine: kind === "yoy" || kind === "mom", logToggle: kind === "lvl" || kind === "idx",
+        style: stySel.value,
+        ranges: ["1Y","5Y","10Y","MAX"], defRange: "MAX", toolsEl: tools, height: 340
+      });
+    } catch (e) { chartMount.appendChild(el("div", "errnote", "Could not chart — " + esc(e.message))); }
+  }
+  tsel.onchange = renderChart;
+  stySel.onchange = renderChart;
+  search.oninput = () => renderList();
+  typeSel.onchange = () => renderList();
+  freqSel.onchange = () => renderList();
+  fBtn.onclick = () => {
+    const src = fBox.value.trim();
+    if (!src) return;
+    try {
+      const obs = formulaSeries(src.toLowerCase(), exSel);
+      exSel.push({ id: "x|" + (exDerivedN++), group: "Derived", cat: "", name: src, code: "formula",
+        obs, fmt: null, desc: "Derived series: " + src + " over the selection at the time it was created." });
+      fBox.value = "";
+      renderChart();
+    } catch (e) {
+      fBtn.textContent = "error: " + e.message;
+      setTimeout(() => fBtn.textContent = "plot formula ⊕", 3000);
+    }
+  };
+  fBox.addEventListener("keydown", e => { if (e.key === "Enter") fBtn.onclick(); });
+  fetchBtn.onclick = async () => {
+    const code = fetchBox.value.trim().toUpperCase();
+    if (!code) return;
+    // KBP catalogue codes live only behind the SARB's download-facility
+    // endpoint (server-side only, no CORS) -- this box hits the browser-CORS
+    // -open WebIndicators API instead, which was never going to have them,
+    // regardless of whether we already hold the code locally. If we do hold
+    // it, just select it directly instead of pointlessly calling an API that
+    // was never going to answer; if we don't, say so rather than a generic
+    // failure after a WebIndicators round-trip that could only ever 404.
+    if (/^KBP\d/.test(code)) {
+      const entry = catalog().find(x => x.code === code);
+      if (entry) { toggleSel(entry); fetchBtn.textContent = "fetch live ↯"; }
+      else {
+        fetchBtn.textContent = "KBP codes are pre-fetched by the updater, not live — search the list";
+        setTimeout(() => fetchBtn.textContent = "fetch live ↯", 3500);
+      }
+      return;
+    }
+    fetchBtn.textContent = "fetching…";
+    try {
+      await fetchAnyCode(code);
+      const entry = catalog().find(x => x.id === "d|" + code);
+      if (entry) toggleSel(entry);
+      fetchBtn.textContent = "fetch live ↯";
+    } catch (e) {
+      fetchBtn.textContent = "failed — check code / connection";
+      setTimeout(() => fetchBtn.textContent = "fetch live ↯", 2500);
+    }
+  };
+  renderList(); renderChart();
+}
+
+/* ---------- Guide: orientation + searchable glossary ---------- */
+const TAB_BLURBS = {
+  overview: "The front page: today's key rates and FX levels at a glance, the SARB's own release register (what's published and how fresh it is), the desk's market-operations notices, and the government yield curve.",
+  policy: "South African interest rates and how tight policy actually is once inflation is stripped out — the repo rate, prime, real rates, and the structure of money-market rates (Jibar, NCDs) around the repo.",
+  fx: "The rand: spot rates against the dollar, pound, euro and yen, plus the trade-weighted NEER/REER indices and the SARB's daily FX rate board.",
+  money: "Money supply (M1/M2/M3), private-sector credit extension, deposits and securitisation — the banking-system side of the economy.",
+  capital: "Bond yields back to 1949, the government yield curve, and activity on the JSE's share, bond and derivative markets, including foreign flows.",
+  gov: "National government's cash flows — revenue, spending, the deficit and how it's financed — plus the debt and balance ratios that frame every Budget speech.",
+  external: "The Balance of Payments (current, capital and financial accounts), the International Investment Position, and the SARB's gold and foreign-exchange reserves.",
+  economy: "GDP, inflation, employment and the other seasonally-adjusted real-economy indicators the SARB tracks — the broadest view of how the economy is actually doing.",
+  ops: "The Market Operations desk's own daily notices: repo auctions, government bond and T-bill auction results, and money-market liquidity summaries.",
+  explorer: "Every series held locally, including the full ~2,300-code Quarterly Bulletin catalogue — search, filter, combine with arbitrary formulas, and chart however you like.",
+};
+function buildGuide(root) {
+  root.appendChild(el("div", "intro",
+    "A field guide to this dashboard: what each tab covers, and a searchable decoder for the acronyms and institutional " +
+    "terms the SARB's own series names lean on. Hovering any series (in Explorer, or in a table row across the site) " +
+    "already shows its official SARB description plus any matching terms from this glossary below it."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  const orient = card(grid, "", "What's in each tab", "A one-line map of the dashboard, in nav order.");
+  const rows = TABS.filter(t => t.id !== "guide").map(t =>
+    `<tr><td style="white-space:nowrap"><b>${esc(t.label)}</b></td><td>${esc(TAB_BLURBS[t.id] || "")}</td></tr>`);
+  orient.cardEl.appendChild(simpleTable(rows, [{h:"Tab"},{h:"Covers"}]));
+
+  const cov = card(grid, "", "Catalogue coverage", "How much of the SARB's published time-series universe this dashboard holds.");
+  const kbpCount = catalog().filter(s => /^KBP\d/.test(s.code)).length;
+  cov.cardEl.appendChild(el("div", null,
+    `<p style="margin:0 0 6px">${esc(String(catalog().length))} series held locally right now, including ` +
+    `${esc(String(kbpCount))} from the Quarterly Bulletin's ~2,320-code catalogue (identified by their <b>KBP</b> ` +
+    `code — see "KBP code" in the glossary below). The catalogue is fetched incrementally in the background by the ` +
+    `updater script and grows over time without any changes needed here.</p>` +
+    `<p style="margin:0;color:var(--muted);font-size:12.5px">Most KBP series carry the SARB's own description as-is — ` +
+    `it's usually plain enough on its own. Where it leans on an acronym or a SARB-specific concept, hover the series ` +
+    `in Explorer and any matching glossary term appears right under the description.</p>`));
+
+  const lookup = card(grid, "", "What each series measures", `Look up any of the ${catalog().length} held series by name or code.`);
+  const lwrap = el("div");
+  lwrap.style.cssText = "max-width:720px";
+  const lsearch = el("input");
+  lsearch.type = "search"; lsearch.placeholder = `Search by name or code, e.g. "credit card" or KBP2001M…`;
+  lsearch.style.cssText = "width:100%;padding:7px 9px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;font-size:13px;margin-bottom:8px";
+  lwrap.appendChild(lsearch);
+  const llist = el("div");
+  lwrap.appendChild(llist);
+  lookup.cardEl.appendChild(lwrap);
+  function renderLookup() {
+    const q = lsearch.value.trim().toLowerCase();
+    llist.innerHTML = "";
+    if (!q) { llist.appendChild(el("div", "errnote", "Type a name, keyword or code to look up what it measures.")); return; }
+    let n = 0;
+    for (const s of catalog()) {
+      if (!(s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q))) continue;
+      if (++n > 60) break;
+      const range = s.obs && s.obs.length ? `${s.obs[0][0]} → ${s.obs[s.obs.length-1][0]}` : "no data";
+      const hints = glossaryHints(`${s.name} ${s.desc || ""}`);
+      const hintsHtml = hints.length ? hints.map(h => `<div style="font-size:11.5px;color:var(--muted);margin-top:2px"><b>${esc(h.term)}</b> — ${esc(h.def)}</div>`).join("") : "";
+      llist.appendChild(el("div", null,
+        `<div style="padding:7px 0;border-bottom:1px solid var(--grid)"><b>${esc(s.name)}</b>` +
+        (s.desc ? `<div style="color:var(--muted);font-size:12.5px;margin-top:2px">${esc(s.desc)}</div>` : "") +
+        `<div style="color:var(--muted);font-size:11px;margin-top:3px">${esc(s.code)} · ${esc(s.group)} · ${esc(range)}</div>` +
+        hintsHtml + `</div>`));
+    }
+    if (!llist.children.length) llist.appendChild(el("div", "errnote", "No series match."));
+    else if (n > 60) llist.appendChild(el("div", "errnote", "60+ matches — refine your search to see more."));
+  }
+  lsearch.addEventListener("input", renderLookup);
+  renderLookup();
+
+  const gloss = card(grid, "", "Glossary", "Search or browse by theme.");
+  const gwrap = el("div");
+  gwrap.style.cssText = "max-width:640px";
+  const gsearch = el("input");
+  gsearch.type = "search"; gsearch.placeholder = `Search ${GLOSSARY_FLAT.length} terms…`;
+  gsearch.style.cssText = "width:100%;padding:7px 9px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;font-size:13px;margin-bottom:8px";
+  gwrap.appendChild(gsearch);
+  const glist = el("div");
+  gwrap.appendChild(glist);
+  gloss.cardEl.appendChild(gwrap);
+  function renderGlossary() {
+    const q = gsearch.value.trim().toLowerCase();
+    glist.innerHTML = "";
+    for (const [group, terms] of GLOSSARY) {
+      const matches = q ? terms.filter(([term, def]) => term.toLowerCase().includes(q) || def.toLowerCase().includes(q)) : terms;
+      if (!matches.length) continue;
+      glist.appendChild(el("div", "exgroup", esc(group)));
+      for (const [term, def] of matches) {
+        glist.appendChild(el("div", null,
+          `<div style="padding:6px 0;border-bottom:1px solid var(--grid)"><b>${esc(term)}</b><div style="color:var(--muted);font-size:12.5px;margin-top:2px">${esc(def)}</div></div>`));
+      }
+    }
+    if (!glist.children.length) glist.appendChild(el("div", "errnote", "No terms match."));
+  }
+  gsearch.addEventListener("input", renderGlossary);
+  renderGlossary();
+}
+
+/* ---------- graphs helper (SARB's own selections) ---------- */
+const GRAPH_GROUPS = [["MRGMA","MoneyAndBankingGraphs"],["MRGIE","InternationalEconomicsGraphs"],["MRGCM","CapitalMarketsGraphs"],["MRGFG","NationalGovernmentGraphs"],["MRGEI","EconomicIndicators"]];
+
+/* =====================================================================
+   Tabs & boot
+   ===================================================================== */
+const TABS = [
+  { id: "overview", label: "Overview", build: buildOverview },
+  { id: "policy", label: "Policy & Rates", build: buildPolicy },
+  { id: "fx", label: "Rand & FX", build: buildFX },
+  { id: "money", label: "Money & Credit", build: buildMoney, needs: ["MRDMA","CDACSM","CDADS","CDACA"] },
+  { id: "capital", label: "Capital Markets", build: buildCapital, needs: ["MRDCM"] },
+  { id: "gov", label: "Government Finance", build: buildGov, needs: ["MRDFG"] },
+  { id: "external", label: "External & Gold", build: buildExternal, needs: ["MRDIE"] },
+  { id: "economy", label: "Real Economy", build: buildEconomy, needs: ["MRDEI"] },
+  { id: "ops", label: "Market Operations", build: buildOps },
+  { id: "explorer", label: "Explorer", build: buildExplorer },
+  { id: "guide", label: "Guide", build: buildGuide },
+];
+let currentTab = "overview";
+function openTab(id) {
+  currentTab = id;
+  [...$("#tabs").children].forEach(b => b.classList.toggle("on", b.dataset.id === id));
+  const view = $("#view");
+  view.innerHTML = "";
+  charts.length = 0;
+  const tab = TABS.find(t => t.id === id);
+  const missing = (tab.needs || []).filter(dt => !D.monthly[dt]);
+  if (missing.length && LIVE_OK !== false && DATA_MODE === "none") {
+    view.appendChild(el("div", "intro", "Fetching archives from the SARB API (" + esc(missing.join(", ")) + ") — the full history is a few MB, one moment…"));
+    Promise.allSettled(missing.map(ensureArchive)).then(() => { if (currentTab === id) { openTab(id); } });
+    return;
+  }
+  try { tab.build(view); } catch (e) {
+    view.appendChild(el("div", "card errnote", "This section failed to render: " + esc(e.message)));
+    console.error(e);
+  }
+  charts.forEach(c => c.draw());
+  equalizeGridRows(view);
+}
+function boot() {
+  const tabs = $("#tabs");
+  for (const t of TABS) {
+    const b = el("button", null, esc(t.label));
+    b.dataset.id = t.id;
+    b.onclick = () => openTab(t.id);
+    tabs.appendChild(b);
+  }
+  $("#themeBtn").onclick = () => {
+    const cur = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", cur);
+    try { localStorage.setItem("sarb_theme", cur); } catch (e) {}
+    openTab(currentTab);
+  };
+  $("#aboutBtn").onclick = showAbout;
+  bindRowPlots($("#view"));
+  setBadge();
+  if (DATA_MODE === "none") {
+    $("#view").appendChild(el("div", "card",
+      "<h3>First run</h3><div class='cardsub'>No local data sidecar found. If you are online, everything will load " +
+      "straight from the SARB API in a few seconds. For full offline use (and the fast 1960-archive), run " +
+      "<b>Update-SARB-Data.ps1</b> once — it writes data/live-data.js next to this file.</div>"));
+  }
+  openTab("overview");
+  liteRefresh().then(ok => {
+    if (ok && DATA_MODE === "none") {
+      Promise.allSettled([
+        ensureDeep("MMRD002A", 2000), ensureDeep("MMRD000A", 2000), ensureDeep("MMRD851A", 2005),
+        ensureDeep("MMRD855A", 2015), ensureDeep("MMRD853A", 2005), ensureDeep("EXCX135D", 1980),
+        ensureDeep("EXCZ001D", 1980), ensureDeep("EXCZ002D", 1980), ensureDeep("EER4504A", 1990),
+        ensureDeep("CPI1000F", 1960, false), ensureDeep("PPI1000F", 1960, false),
+        ensureDeep("BOP5393M", 1970, false), ensureDeep("BOP5395M", 1970, false), ensureDeep("MMSM001R", 1960, false),
+        ...GRAPH_GROUPS.map(([gk, ep]) => ensureGraphs(gk, ep)),
+        // MCM desk notices are now fetched inside liteRefresh() itself (runs
+        // on every load, not just the no-sidecar cold boot), so nothing
+        // further needed here.
+      ]).then(() => openTab(currentTab));
+    } else if (ok) {
+      openTab(currentTab);
+    }
+  }).catch(() => {});
+}
+function showAbout() {
+  openModal("About this dashboard", `
+    <p><b>SARB Data Explorer</b> is a single-file, offline-capable viewer over the South African Reserve Bank's public
+    Web API. It holds the full statistical-release archives (some series start in 1946), deep daily rate and FX
+    history, the SDDS tables, and the money-market desk's operational notices.</p>
+    <h4>Data sources (all SARB Web API, custom.resbank.co.za/SarbWebApi)</h4>
+    <ul>
+      <li>WebIndicators/HomePageRates · CurrentMarketRates · CPDRates — live rates boards</li>
+      <li>WebIndicators/HistoricalExchangeRatesDaily &amp; Monthly — the FX board</li>
+      <li>WebIndicators/ReleaseOfSelectedData/MonthlyIndicatorsAll/{type} — 12 statistical archives back to 1946–1965</li>
+      <li>WebIndicators/Shared/GetTimeseriesObservations/{code}/{from}/{to} — full history for any series code</li>
+      <li>WebIndicators/EconFinDataForSA/* — the IMF SDDS tables</li>
+      <li>MCM/Categories &amp; Contributions — money-market operations notices</li>
+    </ul>
+    <h4>Charts &amp; tables</h4>
+    <p>Every chart: crosshair, range buttons, table view, CSV export. Multi-series charts: click a legend name to
+    hide a series; click its <b>L/R</b> tag to move it between the left and right axis. Some charts split scales
+    automatically when magnitudes differ wildly. Tables export to CSV, and rows with a series code open a history
+    pop-up when clicked.</p>
+    <h4>How data flows</h4>
+    <p><b>data/live-data.js</b> (written by Update-SARB-Data.ps1) is the offline archive. When online, the page also
+    refreshes the fast-moving numbers directly from the API — the SARB allows browser calls from anywhere. The badge
+    top-right shows which mode you are in.</p>
+    <p style="color:var(--muted)">Not affiliated with or endorsed by the SARB. Figures may be revised by the source.
+    Derived analyses are descriptive statistics, not forecasts or advice.</p>`);
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+let rsz;
+window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(() => { charts.forEach(c => c.draw()); equalizeGridRows($("#view")); }, 120); });
+boot();
+</script>
+</body>
+</html>

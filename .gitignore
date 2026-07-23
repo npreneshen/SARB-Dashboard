@@ -1,0 +1,14 @@
+# The data sidecar is machine-generated and ~6 MB; regenerate with
+# Update-SARB-Data.ps1 rather than committing it.
+data/live-data.js
+data/*.tmp
+.deploy-stage/
+
+# wrangler's local cache/auth-token cache -- never publish this
+.wrangler/
+cloudflare/.wrangler/
+
+# One-time KV seed files (same reasoning as data/live-data.js -- machine-
+# generated, several MB, regenerate from data/live-data.js if needed)
+cloudflare/kbp-seed.json
+cloudflare/kbp-meta-seed.json

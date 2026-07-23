@@ -1,0 +1,22 @@
+name = "sarb-kbp-updater"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Every 15 minutes, not once a day -- Cloudflare Workers' free tier caps a
+# single invocation at 50 outbound subrequests, so one run can only get
+# through a bounded chunk of the ~2,320-code catalogue (see CHUNK_BATCHES in
+# worker.js). Firing this often means a full cycle through every code still
+# completes in a couple of hours, which is actually MORE responsive than a
+# single once-daily run would have been -- not a compromise forced by the
+# limit, just a different (and better) way to spend the same request budget.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Created with: wrangler kv namespace create SARB_KV
+# Paste the "id" it prints back in here.
+[[kv_namespaces]]
+binding = "SARB_KV"
+id = "13b44ba6c81e4d3f96f07cbf3389e200"
+
+# CHECK_SECRET is NOT set here on purpose -- secrets don't belong in a file
+# you might commit to git. Set it with: wrangler secret put CHECK_SECRET
