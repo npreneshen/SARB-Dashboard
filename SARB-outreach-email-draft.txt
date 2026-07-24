@@ -1,0 +1,43 @@
+To: Media@resbank.co.za
+Subject: Independent public dashboard built on SARB's published statistics — quick heads-up
+
+Hello,
+
+My name is Preneshen Naicker. I've built an independent, non-commercial dashboard
+that visualises publicly published South African Reserve Bank statistics — policy
+rates, exchange rates, money and credit, government finance, capital markets, the
+external sector, and the Reserve Bank's own release register and desk notices. It's
+live at:
+
+  https://za-macro.pages.dev
+
+I'm reaching out simply as a courtesy, not to request anything, since the project
+draws on SARB's own public web endpoints rather than a published data API:
+
+- The Web Indicators service (custom.resbank.co.za/SarbWebApi), which already sends
+  a permissive cross-origin header, and
+- The download-facility endpoint your own "Online Statistical Query" tool uses
+  (resbank.co.za/bin/sarb/custom/downloadfacility), which I use to reach a further
+  ~2,300 Quarterly Bulletin series not exposed through the Web Indicators service.
+
+No authentication is bypassed anywhere — both are public, unauthenticated endpoints.
+Requests are deliberately light: small batches (well under the server's own request-
+size limit), spaced out, and an incremental design that only checks for newly
+published data rather than repeatedly re-fetching full histories. A scheduled process
+checks in roughly every 15 minutes for small updates; there is no bulk scraping.
+
+The site is clearly labelled throughout as an independent, unofficial project, not
+affiliated with or endorsed by the SARB, with a footer crediting "Data © South
+African Reserve Bank" and a note that nothing on it constitutes financial advice.
+
+I wanted to flag this directly rather than leave it undisclosed. If this use of the
+public endpoints is a problem, or if there's a preferred or official channel I should
+be using instead, please let me know and I'll adjust accordingly. Otherwise, no
+response is needed — I just wanted the Bank to be aware this exists.
+
+Thank you for the work your organisation does in publishing this data — it's made
+a genuinely useful independent tool possible.
+
+Kind regards,
+Preneshen Naicker
+n.preneshen@gmail.com

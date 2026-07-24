@@ -12,3 +12,4 @@ cloudflare/.wrangler/
 # generated, several MB, regenerate from data/live-data.js if needed)
 cloudflare/kbp-seed.json
 cloudflare/kbp-meta-seed.json
+cloudflare/kbp-cursor-reset.json

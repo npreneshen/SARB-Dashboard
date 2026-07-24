@@ -4,7 +4,7 @@ compatibility_date = "2024-01-01"
 
 # Every 15 minutes, not once a day -- Cloudflare Workers' free tier caps a
 # single invocation at 50 outbound subrequests, so one run can only get
-# through a bounded chunk of the ~2,320-code catalogue (see CHUNK_BATCHES in
+# through a bounded chunk of the ~3,400-code catalogue (see CHUNK_BATCHES in
 # worker.js). Firing this often means a full cycle through every code still
 # completes in a couple of hours, which is actually MORE responsive than a
 # single once-daily run would have been -- not a compromise forced by the

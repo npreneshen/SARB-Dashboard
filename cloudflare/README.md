@@ -2,7 +2,7 @@
 
 **This entire folder is optional.** The app works completely on its own with
 `Update-SARB-Data.ps1` run locally (manually, or via `-Install`'s scheduled task) — nothing
-here is required. This is for if you'd rather have the ~2,320-code KBP catalogue stay current
+here is required. This is for if you'd rather have the ~3,400-code KBP catalogue stay current
 automatically in the cloud, with no PC involved at all.
 
 ## Is this worth doing?
@@ -146,7 +146,7 @@ codes' entire histories.
 **Why it's chunked across many small runs instead of one big one**: Cloudflare Workers' free
 tier caps a single invocation at 50 outbound subrequests (`fetch()` calls to other servers) —
 comfortably enough for the ~11-code-per-request cap the SARB's own WAF enforces on this
-endpoint, but nowhere near enough to check all ~2,320 codes (needs ~290 batches) in one go. A
+endpoint, but nowhere near enough to check all ~3,400 codes (needs ~420 batches) in one go. A
 `kbp_cursor` KV key remembers exactly where the last run left off (which frequency group, which
 offset within it) and each run processes up to `CHUNK_BATCHES` batches from there, wrapping
 back to the start once every code has been checked. At every 15 minutes, a full cycle through
@@ -166,6 +166,14 @@ SARB's published Excel) turned out to be wrong for a large share of codes — e.
 discovered the *proven-correct* frequency for every code the hard way (a bounded fallback-retry
 pass), and that's what gets seeded into KV — so the Worker never needs to guess, retry, or even
 know about `kbp-manifest.json` at all. It just trusts what's already recorded per code.
+
+`freq` doesn't always match the data's actual cadence, either — 112 codes are genuinely
+quarterly (BER inflation-expectations surveys, locational banking statistics, FBSAA financial
+assets) but are stored with `freq: "Monthly"`, because querying them as "Yearly" (which also
+works and returns the same quarterly-shaped data) silently omits the SARB's newest published
+point that "Monthly" includes. If you ever see a code whose `freq` looks like it doesn't match
+its own data's spacing, that's expected, not a bug — it means "Monthly" was empirically the
+parameter that got the freshest data for it, not a claim about the true cadence.
 
 ### Files in this folder
 
@@ -196,7 +204,7 @@ these change)
   too, not just `fetch()` calls). The cron fires 96 times/day; each is one request with up to
   ~36 total subrequests (30 SARB batches + ~6 KV ops), safely under both caps.
 - **Workers KV**: 100,000 reads/day, 1,000 writes/day, 1 GB total storage, 25 MB per value. This
-  project's dataset is currently ~8-14 MB (comfortably under the per-value cap) and writes to
+  project's dataset is currently ~11-16 MB (comfortably under the per-value cap) and writes to
   KV at most a few times per chunk run — nowhere close to the daily write cap even at 96
   runs/day.
 - **Cron Triggers**: this project uses one (`*/15 * * * *`).
@@ -209,7 +217,7 @@ these change)
   testing outside any of this project's code) — a run with some failures isn't a bug, the
   chunk's cursor still advances and gets retried on the next cycle. If EVERY batch in a chunk
   fails, check the SARB's site is up at all first.
-- **`/kbp-status` shows `count` growing past 2,320 or `lastRunNewCount` unexpectedly huge**:
+- **`/kbp-status` shows `count` growing past ~3,400 or `lastRunNewCount` unexpectedly huge**:
   something's off with the seed data or the manifest — check the seed step was done correctly.
 - **App doesn't seem to be checking the Worker at all**: confirm `KBP_WORKER_URL` is actually
   set in the built `SARB_Dashboard.html` (search the file for your Worker's URL). Also check the

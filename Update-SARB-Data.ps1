@@ -329,52 +329,106 @@ function FetchDownloadFacility($codes, $freqDesc, $fromYM, $toYM, $batchSize) {
     }
     return ,$rows.ToArray()
 }
-function Compact-KBP($rows, $freqUsed) {
+function Compact-KBP($rows, $freqUsed, $manifestDescByCode) {
+    # Period is an 8-digit YYYYMMDD integer, but what the trailing components
+    # actually MEAN varies by code, not just by the requested frequency:
+    #  - Daily codes (row Specification "D6"): dd is a real calendar day.
+    #  - Weekly codes (Specification "W5"): dd is a WEEK-OF-MONTH INDEX
+    #    (1-5), not a day -- confirmed directly (KBP1490W runs 20260401,
+    #    20260402, 20260403, 20260404, then 20260501..20260505 -- April has
+    #    4 weeks, May has 5). The SARB's own site labels these "2026/04/W4"
+    #    etc. Reading dd as a literal day-of-month (the original approach)
+    #    produced dates only ~1 day apart instead of ~7, and never matched
+    #    the SARB's own reference labels.
+    #  - Monthly codes: dd is always "00", mm is a real calendar month.
+    #  - "Yearly" codes (Specification "K1") are NOT all the same shape:
+    #    some are genuinely one-point-a-year (mm always "00", e.g.
+    #    KBP1420J-style codes), but some are quarterly SURVEY data with the
+    #    QUARTER NUMBER (1-4) packed into the month slot instead (confirmed
+    #    directly: KBP7143K, a BER inflation-expectations series, runs
+    #    20250100/0200/0300/0400 for 2025 Q1-Q4, every one tagged "K1" --
+    #    the exact same Specification as genuine one-point-a-year codes).
+    #    Specification alone can't tell these apart; only the code's OWN
+    #    full value range can -- if dd is always "00" and mm only ever
+    #    takes values 1-4 across the code's entire history, it's a quarter
+    #    number, not a month (a real monthly series would eventually show
+    #    mm > 4 somewhere in its history).
     $byCode = [ordered]@{}
     foreach ($r in $rows) {
         $code = [string]$r["TimeSeriesCode"]
         if (-not $code) { continue }
         if (-not $byCode.Contains($code)) {
             $desc = (([string]$r["LongDesc"]) -replace '<br\s*/?>', ' -- ' -replace '\s+', ' ').Trim()
+            # The SARB's own LongDesc field is truncated to a fixed length AND
+            # occasionally carries a stray internal space where a word wrapped in
+            # their source system (e.g. "Compensati on for employees", or cut off
+            # entirely mid-word) -- the manifest's description, built from their
+            # separate "QB TimeSeries Descriptions" Excel, is consistently the
+            # fuller, cleaner text (confirmed: normalising both to remove all
+            # whitespace, the API's text is a truncated PREFIX of the manifest's in
+            # the overwhelming majority of cases that differ at all). Prefer the
+            # manifest whenever it's an exact match modulo whitespace, or a fuller
+            # version of a truncated API string; keep the API's own text only when
+            # IT is the fuller one (a handful of codes where the manifest only has
+            # a shared generic prefix and the API carries the specific sub-item).
+            if ($manifestDescByCode -and $manifestDescByCode.Contains($code)) {
+                $md = $manifestDescByCode[$code]
+                if ($md) {
+                    $nApi = $desc -replace '\s',''
+                    $nMan = $md -replace '\s',''
+                    if ($nApi -eq $nMan -or ($nMan.StartsWith($nApi) -and $nApi.Length -gt 0)) { $desc = $md }
+                }
+            }
             $byCode[$code] = @{
                 code = $code; name = $desc; unit = [string]$r["UnitOfMeasure"]
-                obs = New-Object System.Collections.Generic.List[object]
+                raw = New-Object System.Collections.Generic.List[object]
             }
-            # Record the frequency string that actually returned data for this
-            # code -- the manifest's own Frequency column is unreliable (see
-            # frequency-fallback below), so a future run's top-up pass needs to
-            # know the PROVEN-working value, not just retry the manifest's tag.
             if ($freqUsed) { $byCode[$code].freq = $freqUsed }
         }
-        # Period is an 8-digit YYYYMMDD integer, but the trailing components
-        # are zero-padded away for coarser frequencies rather than omitted --
-        # Daily/Weekly codes carry a real day (e.g. 20260601), Monthly codes
-        # zero the day (20200100), and Yearly codes zero both month and day
-        # (19800000). Blindly taking Substring(4,2) as "the month" (the
-        # original approach) silently collapsed every day in a month into one
-        # duplicated "YYYY-MM" bucket for Daily/Weekly data, and produced an
-        # invalid "YYYY-00" month for Yearly data (which JS then rolled back
-        # to December of the PRIOR year) -- both confirmed against real
-        # fetched data, not theoretical.
         $periodRaw = [string]$r["Period"]
-        $p = $null
-        if ($periodRaw.Length -ge 8) {
-            $yyyy = $periodRaw.Substring(0,4); $mm = $periodRaw.Substring(4,2); $dd = $periodRaw.Substring(6,2)
-            if ($dd -ne "00") { $p = "$yyyy-$mm-$dd" }
-            elseif ($mm -ne "00") { $p = "$yyyy-$mm" }
-            else { $p = "$yyyy-01" }
-        } elseif ($periodRaw.Length -ge 6) {
-            $p = "$($periodRaw.Substring(0,4))-$($periodRaw.Substring(4,2))"
-        }
-        if ($p) {
-            $v = ToF $r["Value"]
-            if ($null -ne $v) { $byCode[$code].obs.Add(@($p, $v)) }
+        $v = ToF $r["Value"]
+        if ($null -ne $v -and $periodRaw.Length -ge 6) {
+            $byCode[$code].raw.Add(@{ period = $periodRaw; spec = [string]$r["Specification"]; value = $v })
         }
     }
     $out = New-Object System.Collections.Generic.List[object]
     foreach ($k in $byCode.Keys) {
         $s = $byCode[$k]
-        $s.obs = SortObs $s.obs
+        $raws = $s.raw
+        $isWeekly = ($raws | Where-Object { $_.spec -eq "W5" } | Select-Object -First 1) -ne $null
+        $allDayZero = $true; $maxMonth = 0; $anyMonthNonzero = $false
+        foreach ($ro in $raws) {
+            if ($ro.period.Length -ge 8) {
+                $mm = [int]$ro.period.Substring(4,2); $dd = $ro.period.Substring(6,2)
+                if ($dd -ne "00") { $allDayZero = $false }
+                if ($mm -gt $maxMonth) { $maxMonth = $mm }
+                if ($mm -ne 0) { $anyMonthNonzero = $true }
+            }
+        }
+        $isQuarterEncoded = $allDayZero -and $anyMonthNonzero -and ($maxMonth -le 4)
+        $obs = New-Object System.Collections.Generic.List[object]
+        foreach ($ro in $raws) {
+            $periodRaw = $ro.period
+            $p = $null
+            if ($periodRaw.Length -ge 8) {
+                $yyyy = $periodRaw.Substring(0,4); $mm = $periodRaw.Substring(4,2); $dd = $periodRaw.Substring(6,2)
+                if ($isQuarterEncoded) {
+                    if ($mm -ne "00") { $p = "$yyyy-{0:D2}" -f ([int]$mm * 3) }  # quarter-end month (Q1->Mar, ..., Q4->Dec)
+                } elseif ($isWeekly -and $dd -ne "00") {
+                    $wk = [int]$dd
+                    $dim = [DateTime]::DaysInMonth([int]$yyyy, [int]$mm)
+                    $day = [Math]::Min($dim, $wk * 7)
+                    $p = "$yyyy-$mm-{0:D2}" -f $day
+                } elseif ($dd -ne "00") { $p = "$yyyy-$mm-$dd" }
+                elseif ($mm -ne "00") { $p = "$yyyy-$mm" }
+                else { $p = "$yyyy-01" }
+            } elseif ($periodRaw.Length -ge 6) {
+                $p = "$($periodRaw.Substring(0,4))-$($periodRaw.Substring(4,2))"
+            }
+            if ($p) { $obs.Add(@($p, $ro.value)) }
+        }
+        $s.obs = SortObs $obs
+        $s.Remove("raw")
         $out.Add($s)
     }
     return ,$out.ToArray()
@@ -557,6 +611,32 @@ Say "  daily series OK ($nDaily of $($dailyCodes.Count) refreshed)."
 Say "Fetching monthly/annual deep series..."
 $monDeep = New-Object System.Collections.Generic.List[string]
 $monDeep.Add("CPI1000F"); $monDeep.Add("PPI1000F")
+# Balance-of-payments goods trade (quarterly) and merchandise trade totals
+# (monthly) -- the SDDS external-sector snapshot only exposes the latest
+# value, but full deep history is available through this same reliable,
+# CORS-open endpoint. Deliberately NOT the KBP5000J/KBP5003J download-
+# facility codes for the "same" concept -- confirmed directly those are
+# stuck at annual-only granularity no matter which frequency parameter is
+# used (even the SARB's own public Online Statistical Query tool hits the
+# exact same endpoint and would face the same limitation), while these K-
+# suffix/CUR-prefix codes give genuine quarterly/monthly data back to 2000/
+# 2012 respectively.
+#
+# The same K-suffix-vs-J-suffix pattern was confirmed across the WHOLE
+# balance-of-payments current/financial-account family (checked against a
+# fuller SARB code list the user supplied): all 19 K-suffix codes below
+# return genuine current quarterly data, while their J-suffix download-
+# facility counterparts (now removed from kbp-manifest.json entirely, to
+# avoid holding a strictly-worse duplicate) were stuck at annual. This is
+# NOT true of KBP codes generally -- a broad sample of ~25 other unrelated
+# base codes showed neither suffix reachable via WebIndicators at all, so
+# this fix is specific to this BOP-headline family, not a general rule.
+foreach ($c in @(
+    "KBP5000K","KBP5003K","KBP5007K","KBP5002K","KBP5004K","KBP5680K","KBP5681K",
+    "KBP5682K","KBP5764K","KBP5656K","KBP5640K","KBP5660K","KBP5644K","KBP5677K",
+    "KBP5672K","KBP5666K","KBP5650K","KBP5679K","KBP5766K",
+    "CURX600A","CURM600A"
+)) { $monDeep.Add($c) }
 foreach ($grp in @($payload.other, $payload.fxMonthly)) {
     if ($null -eq $grp) { continue }
     foreach ($r in $grp) {
@@ -637,6 +717,8 @@ try {
     $manifestPath = Join-Path $dir "kbp-manifest.json"
     if (-not (Test-Path $manifestPath)) { throw "kbp-manifest.json not found next to the script" }
     $manifest = $Ser.DeserializeObject([IO.File]::ReadAllText($manifestPath))
+    $manifestDescByCode = @{}
+    foreach ($entry in $manifest) { $manifestDescByCode[[string]$entry["code"]] = [string]$entry["desc"] }
     $existingKbp = if ($payload.kbp) { $payload.kbp } else { @{} }
     # A year/month-only date (no day) was the format used here originally;
     # a user-supplied working URL for a previously-failing code used a full
@@ -691,7 +773,7 @@ try {
         Say "  Fetching $($codes.Count) $freq codes..."
         try {
             $rows = FetchDownloadFacility $codes.ToArray() $freq "1960/01/01" $toYM $batchSizes[$freq]
-            $series = Compact-KBP $rows $freq
+            $series = Compact-KBP $rows $freq $manifestDescByCode
             foreach ($s in $series) { $kbpMap[$s.code] = $s; $totalNew++ }
             Say "    $freq OK: $($series.Count) of $($codes.Count) series returned data."
         } catch { Say "    $freq failed ($($_.Exception.Message)) -- codes remain pending for next run." }
@@ -709,7 +791,7 @@ try {
         Say "  Checking $($codes.Count) already-held $freq code(s) for new data..."
         try {
             $rows = FetchDownloadFacility $codes.ToArray() $freq $topUpFrom $toYM $batchSizes[$freq]
-            $series = Compact-KBP $rows $freq
+            $series = Compact-KBP $rows $freq $manifestDescByCode
             foreach ($s in $series) {
                 $existing = $kbpMap[$s.code]
                 if (-not $existing) { $kbpMap[$s.code] = $s; $topUpNew++; continue }
@@ -749,7 +831,7 @@ try {
                 $fallbackBudget--
                 try {
                     $altRows = FetchDownloadFacility @($code) $alt "1960/01/01" $toYM 1
-                    $altSeries = Compact-KBP $altRows $alt
+                    $altSeries = Compact-KBP $altRows $alt $manifestDescByCode
                     if ($altSeries.Count -gt 0) { $kbpMap[$altSeries[0].code] = $altSeries[0]; $fallbackNew++; break }
                 } catch {}
                 if ($fallbackBudget -le 0) { break }

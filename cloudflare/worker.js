@@ -56,22 +56,25 @@ const CHUNK_BATCHES = 30;
 
 function ymd(d) { return d.toISOString().slice(0, 10).replace(/-/g, "/"); }
 
-// Period is an 8-digit YYYYMMDD integer with trailing components zero-padded
-// (not omitted) for coarser frequencies -- a real day for Daily/Weekly codes,
-// day=00 for Monthly, month=00+day=00 for Yearly. See Update-SARB-Data.ps1's
-// Compact-KBP for the fuller writeup of why this matters (silently produced
-// duplicated/invalid dates before this was understood).
-function parsePeriod(periodRaw) {
-  const s = String(periodRaw);
-  if (s.length >= 8) {
-    const yyyy = s.slice(0, 4), mm = s.slice(4, 6), dd = s.slice(6, 8);
-    if (dd !== "00") return `${yyyy}-${mm}-${dd}`;
-    if (mm !== "00") return `${yyyy}-${mm}`;
-    return `${yyyy}-01`;
-  }
-  if (s.length >= 6) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
-  return null;
-}
+// Period is an 8-digit YYYYMMDD integer, but what the trailing components
+// actually MEAN varies by code, not just by the requested frequency:
+//  - Daily codes (row Specification "D6"): dd is a real calendar day.
+//  - Weekly codes (Specification "W5"): dd is a WEEK-OF-MONTH INDEX (1-5),
+//    not a day -- confirmed directly (KBP1490W runs 20260401, 20260402,
+//    20260403, 20260404, then 20260501..20260505 -- April has 4 weeks, May
+//    has 5). The SARB's own site labels these "2026/04/W4" etc.
+//  - Monthly codes: dd is always "00", mm is a real calendar month.
+//  - "Yearly" codes (Specification "K1") are NOT all the same shape: some
+//    are genuinely one-point-a-year (mm always "00"), but some are
+//    quarterly SURVEY data with the QUARTER NUMBER (1-4) packed into the
+//    month slot instead (confirmed directly: KBP7143K, a BER inflation-
+//    expectations series, runs 20250100/0200/0300/0400 for 2025 Q1-Q4,
+//    every one tagged "K1" -- the same Specification as genuine one-point-
+//    a-year codes). Specification alone can't tell these apart; only the
+//    code's OWN full value range can -- if dd is always "00" and mm only
+//    ever takes values 1-4 across the code's entire history, it's a
+//    quarter number (a real monthly series would eventually show mm > 4).
+function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
 
 function compactKBP(rows) {
   const byCode = {};
@@ -80,14 +83,50 @@ function compactKBP(rows) {
     if (!code) continue;
     if (!byCode[code]) {
       const desc = String(r["LongDesc"] || "").replace(/<br\s*\/?>/gi, " -- ").replace(/\s+/g, " ").trim();
-      byCode[code] = { code, name: desc, unit: r["UnitOfMeasure"], obs: [] };
+      byCode[code] = { code, name: desc, unit: r["UnitOfMeasure"], raw: [] };
     }
-    const p = parsePeriod(r["Period"]);
-    if (p == null) continue;
     const v = typeof r["Value"] === "number" ? r["Value"] : parseFloat(r["Value"]);
-    if (!isNaN(v)) byCode[code].obs.push([p, v]);
+    const periodRaw = String(r["Period"] || "");
+    if (!isNaN(v) && periodRaw.length >= 6) byCode[code].raw.push({ period: periodRaw, spec: r["Specification"], value: v });
   }
-  return Object.values(byCode);
+  const out = [];
+  for (const code of Object.keys(byCode)) {
+    const s = byCode[code];
+    const raws = s.raw;
+    const isWeekly = raws.some(ro => ro.spec === "W5");
+    let allDayZero = true, maxMonth = 0, anyMonthNonzero = false;
+    for (const ro of raws) {
+      if (ro.period.length >= 8) {
+        const mm = +ro.period.slice(4, 6), dd = ro.period.slice(6, 8);
+        if (dd !== "00") allDayZero = false;
+        if (mm > maxMonth) maxMonth = mm;
+        if (mm !== 0) anyMonthNonzero = true;
+      }
+    }
+    const isQuarterEncoded = allDayZero && anyMonthNonzero && maxMonth <= 4;
+    const obs = [];
+    for (const ro of raws) {
+      const p = ro.period;
+      let op = null;
+      if (p.length >= 8) {
+        const yyyy = p.slice(0, 4), mm = p.slice(4, 6), dd = p.slice(6, 8);
+        if (isQuarterEncoded) {
+          if (mm !== "00") op = `${yyyy}-${String(+mm * 3).padStart(2, "0")}`; // quarter-end month (Q1->Mar, ..., Q4->Dec)
+        } else if (isWeekly && dd !== "00") {
+          const wk = +dd, dim = daysInMonth(+yyyy, +mm);
+          op = `${yyyy}-${mm}-${String(Math.min(dim, wk * 7)).padStart(2, "0")}`;
+        } else if (dd !== "00") op = `${yyyy}-${mm}-${dd}`;
+        else if (mm !== "00") op = `${yyyy}-${mm}`;
+        else op = `${yyyy}-01`;
+      } else if (p.length >= 6) {
+        op = `${p.slice(0, 4)}-${p.slice(4, 6)}`;
+      }
+      if (op) obs.push([op, ro.value]);
+    }
+    obs.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    out.push({ code: s.code, name: s.name, unit: s.unit, obs });
+  }
+  return out;
 }
 
 async function fetchBatch(codes, freqDesc, fromDate, toDate) {

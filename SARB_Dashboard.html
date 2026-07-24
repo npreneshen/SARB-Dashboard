@@ -116,6 +116,14 @@ a { color: var(--accent); }
   border-color: var(--border);
   box-shadow: 0 -2px 8px rgba(20,32,28,0.04);
 }
+/* Explorer is the deepest/most powerful tab -- given its own accent (not
+   the standard teal) so it reads as distinct from the topic tabs, both
+   at rest and active. */
+#tabs button[data-id="explorer"] { color: var(--bad); }
+#tabs button[data-id="explorer"]:hover { color: var(--bad); filter: brightness(1.15); }
+#tabs button[data-id="explorer"].on {
+  background: var(--card); color: var(--bad); border-color: var(--bad);
+}
 
 /* ---------- layout ---------- */
 #view { max-width: 1340px; margin: 0 auto; padding: 18px 16px 40px; }
@@ -282,6 +290,8 @@ table.data tr.sec td {
 .annc { border-bottom: 1px solid var(--grid); padding: 7px 2px; font-size: 13px; }
 .annc .d { font-size: 11.5px; color: var(--muted); font-weight: 650; }
 .annc:last-child { border-bottom: none; }
+.annc.clickable { cursor: pointer; border-radius: 6px; }
+.annc.clickable:hover { background: var(--card-2); }
 
 footer {
   max-width: 1340px; margin: 0 auto; padding: 8px 18px 26px;
@@ -341,7 +351,6 @@ html, body { max-width: 100%; overflow-x: hidden; }
   <div class="m-body" id="m-body"></div>
 </div></div>
 <script src="data/live-data.js"></script>
-
 <script>
 "use strict";
 /* =====================================================================
@@ -391,6 +400,17 @@ function toF(x) {
   const f = parseFloat(s);
   return isFinite(f) ? f : null;
 }
+// The Minister of Finance and the SARB jointly replaced the old 3-6% target
+// range with a 3% point target (1pp tolerance band, i.e. 2-4%) effective
+// 12 November 2025 ("immediately replaces the previous target range" --
+// National Treasury/SARB joint media advisory). Given a date string, returns
+// whichever target regime actually applied on that date, so historical
+// figures aren't judged against a target that didn't exist yet.
+const INFLATION_TARGET_CUTOVER = "2025-11-12";
+function inflationTargetFor(dateStr) {
+  if (dateStr && dateStr >= INFLATION_TARGET_CUTOVER) return { lo: 2, hi: 4, label: "2–4%" };
+  return { lo: 3, hi: 6, label: "3–6%" };
+}
 // Period string -> epoch ms. "YYYY-MM-DD" daily, "YYYY-MM" monthly (mid-month).
 function pt(p) {
   if (p.length >= 10) return Date.UTC(+p.slice(0,4), +p.slice(5,7)-1, +p.slice(8,10));
@@ -439,11 +459,24 @@ function yoyFromLevels(obs) { // monthly or quarterly "YYYY-MM" levels -> 12-mon
   }
   return out;
 }
-function momFromLevels(obs, gap) {
+function inferPeriodStepMonths(obs) { // detect native cadence (1=monthly, 3=quarterly, 6=semi-annual, 12=annual) from "YYYY-MM" periods
+  const n = Math.min(obs.length, 13);
+  if (n < 2) return 1;
+  const diffs = [];
+  for (let i = 1; i < n; i++) {
+    const [y0, m0] = obs[i-1][0].split("-").map(Number);
+    const [y1, m1] = obs[i][0].split("-").map(Number);
+    diffs.push(Math.abs((y1*12+m1) - (y0*12+m0)));
+  }
+  diffs.sort((a,b) => a-b);
+  return diffs[Math.floor(diffs.length/2)] || 1; // median step, robust to a stray gap/duplicate
+}
+function momFromLevels(obs, gap) { // "1-period" % change at the series' OWN native cadence, not hardcoded to months
+  const step = gap || inferPeriodStepMonths(obs);
   const map = new Map(obs.map(o => [o[0], o[1]]));
   const out = [];
   for (const [p, v] of obs) {
-    const prev = map.get(monthShift(p, -(gap||1)));
+    const prev = map.get(monthShift(p, -step));
     if (prev != null && prev !== 0 && v != null) out.push([p, (v/prev - 1) * 100]);
   }
   return out;
@@ -457,6 +490,56 @@ function roll12Sum(obs) { // 12-month rolling sum of monthly flows
     if (n === 12) out.push([p, s]);
   }
   return out;
+}
+// Cadence-generic versions for the universal per-chart view toggle and Explorer's
+// per-series transforms, where the series could be daily (real calendar dates,
+// gaps for weekends/holidays) as easily as monthly/quarterly ("YYYY-MM" strings) --
+// monthShift-based math is wrong for the former (no such thing as "1 month before
+// a Tuesday" lining up with the next real print), so day-stamped series use a
+// real day offset (yoy) or the immediately preceding print (chg) instead.
+function yoyGeneric(obs) {
+  if (obs.length && obs[0][0].length >= 10) {
+    const out = [];
+    for (const [p, v] of obs) {
+      const ref = obsAtOrBefore(obs, pt(p) - 365 * 86400e3);
+      if (ref && ref[1] != null && ref[1] !== 0 && v != null && pt(p) - pt(ref[0]) < 380 * 86400e3) out.push([p, (v/ref[1] - 1) * 100]);
+    }
+    return out;
+  }
+  return yoyFromLevels(obs);
+}
+function chgGeneric(obs) {
+  if (obs.length && obs[0][0].length >= 10) {
+    const out = [];
+    for (let i = 1; i < obs.length; i++) {
+      const [p, v] = obs[i], prev = obs[i-1][1];
+      if (prev != null && prev !== 0 && v != null) out.push([p, (v/prev - 1) * 100]);
+    }
+    return out;
+  }
+  return momFromLevels(obs);
+}
+function movingAvgN(obs, n) { // trailing average over the last n observations (by count, not calendar span)
+  const out = [];
+  for (let i = n - 1; i < obs.length; i++) {
+    let sum = 0, ok = true;
+    for (let k = 0; k < n; k++) { const v = obs[i-k][1]; if (v == null) { ok = false; break; } sum += v; }
+    if (ok) out.push([obs[i][0], sum / n]);
+  }
+  return out;
+}
+function rollSumN(obs, n) { // trailing sum over the last n observations
+  const out = [];
+  for (let i = n - 1; i < obs.length; i++) {
+    let sum = 0, ok = true;
+    for (let k = 0; k < n; k++) { const v = obs[i-k][1]; if (v == null) { ok = false; break; } sum += v; }
+    if (ok) out.push([obs[i][0], sum]);
+  }
+  return out;
+}
+function defaultWindowN(obs) { // a sensible default N per cadence: "12" reads as 12 months, "4" as 4 quarters, etc.
+  const f = inferFreq(obs);
+  return { Daily: 30, Weekly: 13, Monthly: 12, Quarterly: 4, Annual: 3 }[f] || 12;
 }
 function index100(obs, fromT) {
   let base = null;
@@ -511,6 +594,14 @@ function spreadSeries(aObs, bObs) { // a - b sampled on a's dates (b step-held)
   }
   return out;
 }
+function ratioSeries(aObs, bObs, mult) { // a / b * mult, sampled on a's dates (b step-held)
+  const out = [];
+  for (const [p, v] of aObs) {
+    const b = obsAtOrBefore(bObs, pt(p));
+    if (b && v != null && b[1]) out.push([p, (v / b[1]) * (mult || 1)]);
+  }
+  return out;
+}
 
 /* ---------- data ---------- */
 let D = (typeof window.SARB_LIVE === "object" && window.SARB_LIVE) ? window.SARB_LIVE : null;
@@ -521,6 +612,74 @@ else D = { home:null, market:null, cpd:null, fxDaily:null, fxMonthly:null, other
            rateChanges:null, releases:null, monthly:{}, graphs:{}, daily:{}, sdds:null, mcm:null };
 
 // One-time cleanup of names held in the sidecar (nbsp entities etc.).
+// The 12 core archives come straight from the SARB's own API, which leaves
+// `desc` blank for a genuine minority of rows (confirmed: SARB's own response,
+// not something our fetch is failing to capture) -- these are otherwise
+// perfectly identifiable series, so a small hand-written lookup fills the gap
+// rather than showing an unhelpful "no description" line for series that
+// really do have one, just not from the SARB API itself.
+const ARCHIVE_DESC_OVERRIDE = {
+  ZECC034T: "Cumulative value of mortgage advances removed from bank balance sheets via securitisation since this series began.",
+  ZECC035T: "Cumulative value of other loans and advances removed from bank balance sheets via securitisation since this series began.",
+  ZECC089T: "Cumulative value of total loans and advances removed from bank balance sheets via securitisation since this series began.",
+  ZECC187T: "Cumulative value of instalment sale credit and leasing finance removed from bank balance sheets via securitisation since this series began.",
+  MON0089B: "Total loans and advances excluding investments and bills, seasonally adjusted.",
+  MON0034B: "Mortgage advances extended by monetary institutions, seasonally adjusted.",
+  MON0185B: "Instalment sale credit extended by monetary institutions, seasonally adjusted.",
+  MON0112B: "Other loans and advances to households, seasonally adjusted.",
+  MON0113B: "Other loans and advances to companies, seasonally adjusted.",
+  MON0266B: "General loans extended by monetary institutions, seasonally adjusted.",
+  MON0180B: "Overdraft credit extended by monetary institutions, seasonally adjusted.",
+  MON0267B: "Credit card debt outstanding at monetary institutions, seasonally adjusted.",
+  MON0041A: "Counterpart of M3: the monetary sector's net foreign assets, not adjusted for currency revaluation.",
+  MON0029A: "Counterpart of M3: total gross claims (lending) by the monetary sector on general government.",
+  MON0009A: "Counterpart of M3: government's own deposits held at the monetary sector — a rise here subtracts from M3.",
+  MON0131A: "Counterpart of M3: the residual 'other' assets and liabilities not captured by the other counterparts.",
+  MON0100P: "12-month growth in M1, the narrowest money-supply measure (cash plus demand deposits).",
+  MON0200P: "12-month growth in M2 (M1 plus short-term and ordinary savings deposits).",
+  MON0089P: "12-month growth in total loans and advances extended by monetary institutions.",
+  MON0075P: "12-month growth in total domestic credit extension.",
+  MON0150P: "12-month growth in M1A, a narrower cash-focused variant of M1.",
+  MON0288A: "Total deposits held by households at the monetary sector, Rand and foreign-currency denominated combined.",
+  BAT0267M: "Deposits held by unincorporated businesses, Rand-denominated.",
+  BAT0277M: "Deposits held by individuals, Rand-denominated.",
+  BAT0287M: "Deposits held by non-profit organisations, Rand-denominated.",
+  BAT0147M: "Deposits held by local government, Rand-denominated.",
+  BAT0167M: "Deposits held by the Public Investment Corporation (PIC), Rand-denominated.",
+  BAT0357M: "Deposits held by the household sector, foreign-currency denominated.",
+  MON0282A: "Total deposits held by financial corporates, Rand and foreign-currency denominated combined.",
+  MON0298A: "Total deposits held by the household sector, Rand and foreign-currency denominated combined.",
+  BAT0177M: "Deposits held by public non-financial corporates, Rand-denominated.",
+  BAT0257M: "Deposits held by private non-financial corporates, Rand-denominated.",
+  MON0297A: "Total deposits held by non-financial corporates, Rand and foreign-currency denominated combined.",
+  BAT0157M: "Deposits held by public financial corporates, Rand-denominated.",
+  BAT0187M: "Deposits held by insurers, Rand-denominated.",
+  BAT0197M: "Deposits held by pension funds, Rand-denominated.",
+  BAT0207M: "Deposits held by private financial corporates, Rand-denominated.",
+  MON0299A: "Total deposits held by financial corporates, Rand and foreign-currency denominated combined.",
+  MON0392A: "Total deposits held by non-financial companies at the monetary sector, Rand and foreign-currency denominated combined.",
+  MON0492A: "Total deposits held by financial companies at the monetary sector, Rand and foreign-currency denominated combined.",
+  BAT0377M: "Deposits held by non-financial corporates, foreign-currency denominated.",
+  BAT0367M: "Deposits held by financial corporates, foreign-currency denominated.",
+  MON0255X: "Total credit extended to the household sector (quarterly).",
+  MON0254X: "Total credit extended to the corporate sector (quarterly).",
+  MON0400A: "Total loans and advances extended to households.",
+  MON0401A: "Total loans and advances extended to corporations.",
+  MON0255I: "Household-sector credit as a share of total credit extended.",
+  MON0400I: "Household-sector loans and advances as a share of total loans and advances.",
+  MON0254A: "Total credit extended to corporations, within the broader credit total.",
+  MON0254I: "Corporate-sector credit as a share of total credit extended.",
+  MON0401I: "Corporate-sector loans and advances as a share of total loans and advances.",
+  CMSM081A: "Monthly volume of shares traded on the JSE, in millions of shares.",
+  CMSM082A: "Monthly value of shares traded on the JSE, in Rand millions.",
+  CAPM335A: "Net non-resident purchases of South African shares and bonds combined — positive means foreign investors were net buyers that period.",
+  CAPM700A: "Number of transactions in the fixed-interest (bond) securities market.",
+  PROB101B: "Physical volume of gold-mining output, indexed to 2019=100.",
+  PROB211B: "Physical volume of output from mining sectors other than gold, indexed to 2019=100.",
+  BOP5277M: "The SARB's gross gold and foreign-exchange reserves plus its net open forward position in foreign currency, in US dollar millions — a standard measure of the country's international liquidity buffer.",
+  MON0212A: "Deposits placed with banks and mutual banks by non-resident depositors.",
+  MON0213A: "Total deposit liabilities of banks and mutual banks to all depositors.",
+};
 function normalizeData() {
   const cn = cleanName;
   for (const k of ["home","market","cpd","fxDaily","fxMonthly"]) if (D[k])
@@ -528,7 +687,7 @@ function normalizeData() {
   if (D.other) for (const r of D.other) { r.name = cn(r.name); r.desc = cn(r.desc); r.section = cn(r.section); }
   if (D.rateChanges) for (const r of D.rateChanges) r.name = cn(r.name);
   for (const dt of Object.keys(D.monthly || {})) for (const s of D.monthly[dt] || [])
-    { s.name = cn(s.name); s.catName = cn(s.catName); s.desc = cn(s.desc); s.sub = cn(s.sub); }
+    { s.name = cn(s.name); s.catName = cn(s.catName); s.desc = cn(s.desc) || ARCHIVE_DESC_OVERRIDE[s.code]; s.sub = cn(s.sub); }
   for (const c of Object.keys(D.daily || {})) { const s = D.daily[c]; s.name = cn(s.name); s.desc = cn(s.desc); }
   for (const gk of Object.keys(D.graphs || {})) for (const n of Object.keys(D.graphs[gk] || {}))
     for (const s of D.graphs[gk][n] || []) { s.name = cn(s.name); s.desc = cn(s.desc); }
@@ -751,9 +910,21 @@ async function liteRefresh() {
   const res = await Promise.allSettled(jobs);
   LIVE_OK = res.some(r => r.status === "fulfilled");
   if (LIVE_OK) {
-    // top up the daily series the overview leans on
-    const tails = ["MMRD002A","MMRD851A","MMRD855A","MMRD853A","EXCX135D","EXCZ001D","EXCZ002D","EER4504A"]
-      .filter(c => D.daily[c] && D.daily[c].obs.length);
+    // Top up every daily-frequency series actually used somewhere in the
+    // app -- this used to be a short, overview-only list, which meant the
+    // yield curve and its instrument table (T-bills, Jibar, NCDs, the two
+    // benchmark bond closing yields, the two daily-average bond-yield
+    // buckets) kept showing whatever was baked in at the last deploy, even
+    // though the live "Current market rates" board (a separate snapshot
+    // fetch, not this deep-history tail) was already current -- the exact
+    // inconsistency a user caught by comparing the two on the same page.
+    const tails = [
+      "MMRD002A","MMRD000A","MMRD851A","MMRD855A","MMRD853A",
+      "EXCX135D","EXCZ001D","EXCZ002D","EER4504A",
+      "MMRD203A","MMRD206A","MMRD209A","MMRD212A","MMRD403A",
+      "MMRD303A","MMRD306A","MMRD312A","MMRD708A","MMRD709A",
+      "CMJD003A","CMJD004A",
+    ].filter(c => D.daily[c] && D.daily[c].obs.length);
     await Promise.allSettled(tails.map(c => tailFetch(c)));
   }
   setBadge();
@@ -844,7 +1015,9 @@ class Chart {
   /* mount: element. cfg: { series:[{name, obs, color?, step?, dash?, fill?, width?, axis?("L"|"R")}],
      fmt, unit, ranges, defRange, logToggle, zeroLine, band:{y0,y1}, height, note,
      dualAuto (split scales automatically when magnitudes differ wildly),
-     viewToggle:{def:"lvl"|"yoy"} (Level / 12-month % change switch) } */
+     viewToggle:{def:"lvl"|"yoy"|"chg"|"ma"|"sum"} (Level / % change / YoY % / moving average /
+     rolling sum switch -- on by default for every chart; pass viewToggle:false to omit it
+     entirely, e.g. for stacked charts where a further transform breaks the stack) } */
   constructor(mount, cfg) {
     this.cfg = cfg;
     this.series = cfg.series.map((s, i) => {
@@ -856,7 +1029,8 @@ class Chart {
       return o;
     });
     if (cfg.style === "area") for (const s of this.series) s.fill = true;
-    this.view = cfg.viewToggle ? (cfg.viewToggle.def || "lvl") : "lvl";
+    this.view = cfg.viewToggle && cfg.viewToggle.def || "lvl";
+    this.maN = (cfg.viewToggle && cfg.viewToggle.n) || defaultWindowN(this.series[0] ? this.series[0].baseObs : []);
     this.log = false;
     this.mount = mount;
     this.box = el("div", "chartbox");
@@ -866,15 +1040,31 @@ class Chart {
     mount.appendChild(this.box);
     const tools = cfg.toolsEl;
     if (tools) {
-      if (cfg.viewToggle) {
-        this.viewEl = el("span", "rangebtns");
-        for (const [v, lab] of [["lvl","Level"],["yoy","YoY %"]]) {
-          const b = el("button", null, lab);
-          b.onclick = () => { this.view = v; this.applyView(); this.draw();
-            [...this.viewEl.children].forEach(x => x.classList.toggle("on", x.textContent === lab)); };
-          if (v === this.view) b.classList.add("on");
-          this.viewEl.appendChild(b);
-        }
+      const stackedStyle = cfg.style === "stackbar" || cfg.style === "stackarea";
+      if (cfg.viewToggle !== false && !stackedStyle) {
+        this.viewEl = el("span", null);
+        this.viewEl.style.cssText = "display:inline-flex;gap:4px;align-items:center";
+        const vsel = el("select", "minibtn");
+        vsel.style.cssText = "padding:3px 5px;border:1px solid var(--axis);border-radius:6px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px";
+        for (const [v, lab] of [["lvl","Level"],["chg","% change"],["yoy","YoY %"],["ma","Moving avg"],["sum","Rolling sum"]])
+          vsel.appendChild(new Option(lab, v));
+        vsel.value = this.view;
+        const nInput = el("input");
+        nInput.type = "number"; nInput.min = "2"; nInput.max = "60"; nInput.value = this.maN;
+        nInput.title = "Window size (number of periods)";
+        nInput.style.cssText = "width:44px;padding:3px 4px;border:1px solid var(--axis);border-radius:6px;background:var(--card-2);color:var(--ink);font:inherit;font-size:12px";
+        nInput.style.display = (this.view === "ma" || this.view === "sum") ? "" : "none";
+        vsel.onchange = () => {
+          this.view = vsel.value;
+          nInput.style.display = (this.view === "ma" || this.view === "sum") ? "" : "none";
+          this.applyView(); this.draw();
+        };
+        nInput.onchange = () => {
+          const n = Math.max(2, Math.min(60, parseInt(nInput.value) || this.maN));
+          this.maN = n; nInput.value = n;
+          this.applyView(); this.draw();
+        };
+        this.viewEl.appendChild(vsel); this.viewEl.appendChild(nInput);
         tools.appendChild(this.viewEl);
       }
       const spans = this.spanYears();
@@ -938,10 +1128,21 @@ class Chart {
     charts.push(this);
   }
   applyView() {
-    for (const s of this.series) s.obs = this.view === "yoy" ? yoyFromLevels(s.baseObs) : s.baseObs;
+    for (const s of this.series) {
+      s.obs = this.view === "yoy" ? yoyGeneric(s.baseObs)
+        : this.view === "chg" ? chgGeneric(s.baseObs)
+        : this.view === "ma" ? movingAvgN(s.baseObs, this.maN)
+        : this.view === "sum" ? rollSumN(s.baseObs, this.maN)
+        : s.baseObs;
+    }
   }
-  fmtNow() { return this.view === "yoy" ? "0.0" : this.cfg.fmt; }
-  unitNow() { return this.view === "yoy" ? "%" : this.cfg.unit; }
+  fmtNow() { return this.view === "yoy" || this.view === "chg" ? "0.0" : this.cfg.fmt; }
+  unitNow() { return this.view === "yoy" || this.view === "chg" ? "%" : this.cfg.unit; }
+  // Per-series override (Explorer plots series with independently-chosen transforms
+  // on one chart) -- falls back to the chart-level format/unit when a series
+  // doesn't carry its own.
+  fmtNowS(s) { return s.fmt !== undefined ? s.fmt : this.fmtNow(); }
+  unitNowS(s) { return s.unit !== undefined ? s.unit : this.unitNow(); }
   spanYears() {
     let t0 = Infinity, t1 = -Infinity;
     for (const s of this.series) if (s.obs.length) { t0 = Math.min(t0, pt(s.obs[0][0])); t1 = Math.max(t1, pt(lastObs(s.obs)[0])); }
@@ -995,8 +1196,10 @@ class Chart {
     }
     if (lo === Infinity) { lo = 0; hi = 1; }
     if (axis === "L") {
-      if ((this.cfg.zeroLine || this.view === "yoy") && !this.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-      if (this.cfg.band && this.view !== "yoy") { lo = Math.min(lo, this.cfg.band.y0); hi = Math.max(hi, this.cfg.band.y1); }
+      if ((this.cfg.zeroLine || this.view === "yoy" || this.view === "chg") && !this.log) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+      if (this.cfg.band && this.view !== "yoy" && this.view !== "chg") {
+        for (const seg of Array.isArray(this.cfg.band) ? this.cfg.band : [this.cfg.band]) { lo = Math.min(lo, seg.y0); hi = Math.max(hi, seg.y1); }
+      }
     }
     if (lo === hi) { lo -= 1; hi += 1; }
     const pad = (hi - lo) * 0.07;
@@ -1061,9 +1264,22 @@ class Chart {
     const YL = mkY(yL0, yL1), YR = mkY(yR0, yR1);
     const Yof = s => (s.axis || "L") === "R" ? YR : YL;
     g.font = "11px Segoe UI, system-ui, sans-serif";
-    if (this.cfg.band && this.view !== "yoy") {
+    if (this.cfg.band && this.view !== "yoy" && this.view !== "chg") {
+      // A plain {y0,y1} draws one flat band across the whole chart; an array
+      // of {from,to,y0,y1} segments (from/to a "YYYY-MM-DD" string, either
+      // end omitted meaning open) draws a band that actually changes over
+      // time -- needed for the CPI target, which was 3-6% until 12 Nov 2025
+      // and is a different range since. A flat band would misrepresent
+      // years when the OLD target was the genuinely correct one.
       g.fillStyle = css("--good-bg");
-      g.fillRect(padL, YL(this.cfg.band.y1), pw, YL(this.cfg.band.y0) - YL(this.cfg.band.y1));
+      const segs = Array.isArray(this.cfg.band) ? this.cfg.band : [this.cfg.band];
+      for (const seg of segs) {
+        const segFrom = seg.from ? pt(seg.from) : this.t0;
+        const segTo = seg.to ? pt(seg.to) : this.t1;
+        const x0 = Math.max(padL, X(Math.max(segFrom, this.t0)));
+        const x1 = Math.min(padL + pw, X(Math.min(segTo, this.t1)));
+        if (x1 > x0) g.fillRect(x0, YL(seg.y1), x1 - x0, YL(seg.y0) - YL(seg.y1));
+      }
     }
     // direct value labels are computed first so axis tick labels can
     // step aside instead of colliding with them at the right edge
@@ -1107,7 +1323,7 @@ class Chart {
         g.fillText(fmtV(v, this.tickFmt(ticksR)), padL + pw + 6, y);
       }
     }
-    if ((this.cfg.zeroLine || this.view === "yoy") && yL0 < 0 && yL1 > 0 && !this.log) {
+    if ((this.cfg.zeroLine || this.view === "yoy" || this.view === "chg") && yL0 < 0 && yL1 > 0 && !this.log) {
       g.strokeStyle = axisC; g.lineWidth = 1.2;
       g.beginPath(); g.moveTo(padL, YL(0)); g.lineTo(padL + pw, YL(0)); g.stroke();
     }
@@ -1284,7 +1500,7 @@ class Chart {
     for (const { s, o } of rows) {
       const tag = hasR ? ` <span style="color:var(--muted);font-size:10px">(${s.axis || "L"})</span>` : "";
       html += `<div class="tt-r"><span class="sw" style="background:${s.color}"></span><span class="nm">${esc(s.name)}</span>${tag}` +
-        `<span class="v">${fmtV(o[1], this.fmtNow())}${this.unitNow() ? " " + esc(this.unitNow()) : ""}</span></div>`;
+        `<span class="v">${fmtV(o[1], this.fmtNowS(s))}${this.unitNowS(s) ? " " + esc(this.unitNowS(s)) : ""}</span></div>`;
     }
     showTip(e.clientX, e.clientY, html);
   }
@@ -1300,7 +1516,7 @@ class Chart {
       const tr = el("tr");
       tr.innerHTML = `<td>${esc(plabel(p))}</td>` + this.visible().map(s => {
         const m = s.obs.find(o => o[0] === p);
-        return `<td class="num">${m ? fmtV(m[1], this.fmtNow()) : ""}</td>`;
+        return `<td class="num">${m ? fmtV(m[1], this.fmtNowS(s)) : ""}</td>`;
       }).join("");
       body.appendChild(tr);
     }
@@ -1573,7 +1789,6 @@ function sparkline(canvas, obs, color, years) {
   g.beginPath(); g.arc(X(pt(lp)), Y(lv), 2.2, 0, 7); g.fill();
 }
 
-
 /* =====================================================================
    Tab builders
    ===================================================================== */
@@ -1666,6 +1881,36 @@ const CURVE_MM = [
   { code: "MMRD306A", label: "NCD 6m", m: 0.5 },
   { code: "MMRD312A", label: "NCD 12m", m: 1.0 },
 ];
+// The Market Operations desk's daily "Valuation Rates" notice quotes yields
+// for individual bonds by code (e.g. R2030, I2043, RS2031, RN2027...) --
+// FAR more maturity points than the 5 broad KBP buckets, and same-day rather
+// than 6-8 weeks lagged. Only ~2 rows deep online (today + maybe yesterday --
+// no real history), so it can only ever improve the "Latest" snapshot, not
+// the historical comparisons. Deliberately limited to codes whose maturity
+// year is unambiguous from the code itself (standard nominal R-bonds, plus
+// R209 which this app already verified elsewhere as "6.25% 2036") -- the
+// notice also carries RI/RS/RN/ES/TN-prefixed instruments whose exact
+// instrument type isn't confidently known here, and guessing wrong on a
+// financial chart is worse than leaving them out. They're still visible in
+// full, unfiltered, on the Market Operations tab's own Valuation Rates card.
+const VALRATES_BOND_YEARS = { R209: 2036 };
+for (const y of [2030,2032,2033,2035,2037,2038,2039,2040,2042,2044,2048,2053]) VALRATES_BOND_YEARS["R" + y] = y;
+function valRatesLatest() {
+  const rows = D.mcm && D.mcm.contributions && D.mcm.contributions.VALRATES;
+  if (!rows || !rows.length) return null;
+  const newest = rows.slice().sort((a, b) => (a.Date || "") < (b.Date || "") ? 1 : -1)[0];
+  if (!newest || !newest.Date) return null;
+  const date = newest.Date.slice(0, 10);
+  const nowY = new Date(todayUTC()).getUTCFullYear();
+  const pts = [];
+  for (const cols of mcmLines(newest.XMLData)) {
+    const code = (cols[0] || "").trim(), val = parseFloat((cols[1] || "").trim());
+    const year = VALRATES_BOND_YEARS[code];
+    if (year == null || isNaN(val) || val <= 0) continue;
+    pts.push({ x: Math.max(0.1, (year - nowY) + 0.5), y: val, label: code, code, date });
+  }
+  return pts.length ? { date, pts } : null;
+}
 function instYears(inst) {
   if (inst.m != null) return inst.m;
   return Math.max(0.05, (pt(inst.mat) - todayUTC()) / YEAR);
@@ -1758,13 +2003,31 @@ function buildYieldCurve(grid) {
     ];
     if (farYears > 0) list.push({ label: farYears + " year" + (farYears > 1 ? "s" : "") + " ago", off: 365 * farYears, colorVar: "--s4", width: 1.4, dash: true });
     const prevOn = new Map(snaps.map(sn => [sn.label, sn.on]));
-    snaps = list.map(sn => Object.assign(sn, { on: prevOn.has(sn.label) ? prevOn.get(sn.label) : true,
-      pts: curvePoints(CURVE_GOVT, t1 - sn.off * 86400e3, curveCache) })).filter(sn => sn.pts.length >= 3);
+    // The desk's daily Valuation Rates notice gives per-bond yields same-day
+    // (vs the KBP buckets' 6-8 week lag) -- but only ever holds ~1-2 days of
+    // history online, so it can only ever improve "Latest", never the
+    // historical comparison lines (which still need the KBP buckets' real
+    // depth). Falls back to the original bucket-based approach entirely if
+    // the notice is missing or more than a few days stale.
+    const vr = valRatesLatest();
+    const useVR = vr && (t1 - pt(vr.date)) < 5 * 86400e3;
+    snaps = list.map(sn => {
+      let pts;
+      if (sn.off === 0 && useVR) {
+        const tbills = curvePoints(CURVE_GOVT.filter(i => i.mm), t1, curveCache);
+        pts = [...tbills, ...vr.pts].sort((a, b) => a.x - b.x)
+          .filter((p, i, arr) => i === 0 || p.x > arr[i-1].x + 1e-6);
+      } else {
+        pts = curvePoints(CURVE_GOVT, t1 - sn.off * 86400e3, curveCache);
+      }
+      return Object.assign(sn, { on: prevOn.has(sn.label) ? prevOn.get(sn.label) : true, pts });
+    }).filter(sn => sn.pts.length >= 3);
   }
   buildSnaps();
   if (!snaps.length) return;
 
-  const cc = card(grid, "half", "Government yield curve", "T-bill tenders (daily, NACS-equivalent) and bond yield maturity buckets (monthly), interpolated.");
+  const vrUsed = snaps.some(sn => sn.off === 0 && sn.pts.some(p => VALRATES_BOND_YEARS[p.code]));
+  const cc = card(grid, "half", "Government yield curve", "T-bill tenders and bond closing yields, interpolated.");
   const box = el("div", "chartbox");
   const cv = document.createElement("canvas");
   box.appendChild(cv);
@@ -1796,9 +2059,10 @@ function buildYieldCurve(grid) {
   cc.tools.appendChild(el("span", null, "<span style='color:var(--muted);font-size:11.5px;margin-right:2px'>compare vs:</span>"));
   cc.tools.appendChild(farCtl);
   cc.cardEl.appendChild(el("div", "note",
-    "Indicative curve from quoted market yields, not a bootstrapped zero curve — the SARB only publishes two individual bonds " +
-    "(R2030, R209), not enough to strip a true term structure. T-bill yields are converted from simple ACT/365 to NACS-equivalent " +
-    "(semi-annual compounding) so they sit on the same basis as the bond yields."));
+    "Indicative curve from quoted market yields, not a bootstrapped zero curve — T-bill yields are converted from simple ACT/365 " +
+    "to NACS-equivalent (semi-annual compounding) so they sit on the same basis as the bond yields. \"Latest\" uses the desk's " +
+    "own per-bond Valuation Rates notice for extra detail; older comparisons use the broader maturity buckets, the only source " +
+    "with history."));
   const snOn = () => snaps.filter(sn => sn.on);
 
   const XS = m => Math.sqrt(m); // sqrt-maturity axis, standard for curves
@@ -1967,9 +2231,10 @@ function buildOverview(root) {
   if (prime) tile(tiles, { label:"Prime lending rate", value:fmtV(prime.value,"0.00"), unit:"%",
     sub:`spread over repo ${fmtV(prime.value - (repo ? repo.value : 0), "0.00")} pp`, spark:sO("MMRD000A"), sparkYears:10, sparkColor:css("--s4"), code:"MMRD000A", fmt:"0.00" });
   if (cpi) {
-    const inBand = cpi.value >= 3 && cpi.value <= 6;
+    const tgt = inflationTargetFor(cpi.date);
+    const inBand = cpi.value >= tgt.lo && cpi.value <= tgt.hi;
     tile(tiles, { label:"CPI inflation (y/y)", value:fmtV(cpi.value,"0.0"), unit:"%",
-      sub:`${esc(cpi.date)} · target 3–6% <span class="chip ${inBand ? "good" : "bad"}">${inBand ? "in band" : "outside band"}</span>`,
+      sub:`${esc(cpi.date)} · target ${tgt.label} <span class="chip ${inBand ? "good" : "bad"}">${inBand ? "in band" : "outside band"}</span>`,
       spark:sO("CPI1000F"), sparkColor:css("--s5"), code:"CPI1000F", fmt:"0.0" });
   }
   if (ppi) tile(tiles, { label:"PPI inflation (y/y)", value:fmtV(ppi.value,"0.0"), unit:"%", sub:esc(ppi.date),
@@ -2009,8 +2274,10 @@ function buildOverview(root) {
       if (shown >= 6) break;
       if (mcmJunky(r.XMLData)) continue;
       const lines = mcmLines(r.XMLData).map(l => l.join(" ").trim()).filter(x => x);
-      noticesWrap.appendChild(el("div", "annc",
-        `<div class="d">${esc((r.Date || "").slice(0, 10))} · ${esc(catName(cid))}</div>${esc(lines.slice(0, 3).join(" — ").slice(0, 220))}`));
+      const item = el("div", "annc clickable",
+        `<div class="d">${esc((r.Date || "").slice(0, 10))} · ${esc(catName(cid))}</div>${esc(lines.slice(0, 3).join(" — ").slice(0, 220))}`);
+      item.onclick = () => openModal(`${catName(cid)} — ${(r.Date || "").slice(0, 10)}`, mcmTable(r.XMLData));
+      noticesWrap.appendChild(item);
       shown++;
     }
     if (!shown) throw new Error("none held");
@@ -2026,7 +2293,24 @@ function buildOverview(root) {
   const mb = card(grid, "half", "Current market rates", "The SARB's live rates board. Click a row for history.");
   try {
     const rows = [];
-    const all = (D.market || []).concat(D.cpd || []);
+    // R2030/R209 closing yields lag by up to a day on both of the SARB's own
+    // rate endpoints (confirmed directly: CurrentMarketRates and the deep-
+    // history endpoint agree with each other, both a day behind), while the
+    // desk's daily Valuation Rates notice already has today's close for the
+    // exact same two bonds. Prefer it here when it's genuinely newer --
+    // falls back to the normal snapshot value untouched otherwise, so a
+    // missing or stale notice never blanks out a row.
+    const VALRATES_MMRD_BRIDGE = { MMRD708A: "R2030", MMRD709A: "R209" };
+    const vrNow = valRatesLatest();
+    const vrByCode = {};
+    if (vrNow) for (const p of vrNow.pts) vrByCode[p.code] = { value: p.y, date: vrNow.date };
+    const all = (D.market || []).concat(D.cpd || []).map(r => {
+      const bridge = VALRATES_MMRD_BRIDGE[r.code];
+      const fresher = bridge && vrByCode[bridge] && vrByCode[bridge].date > r.date;
+      if (!fresher) return r;
+      const nv = vrByCode[bridge].value;
+      return { ...r, value: nv, date: vrByCode[bridge].date, upDown: nv > r.value ? 1 : nv < r.value ? -1 : 0 };
+    });
     if (!all.length) throw new Error("no data");
     let lastSec = null;
     for (const r of all) {
@@ -2535,6 +2819,81 @@ function buildExternal(root) {
   } catch (e) {}
 }
 
+/* ---------- Terms of trade ---------- */
+function buildTrade(root) {
+  root.appendChild(el("div", "intro",
+    "What South Africa earns for its exports versus what it pays for its imports — goods trade quarterly back to " +
+    "2000, merchandise trade monthly back to 2012, and the terms-of-trade index annually. Three different SARB " +
+    "sources, each at its own best available granularity — noted per chart."));
+  const grid = el("div", "grid");
+  root.appendChild(grid);
+
+  try {
+    const exp = sO("KBP5000K") || [], imp = sO("KBP5003K") || [];
+    chartCard(grid, "half", "Goods trade (quarterly)", "Balance of payments basis, R millions, not seasonally adjusted.", {
+      series: [
+        { name: "Exports", obs: exp, color: css("--s1"), width: 2.2 },
+        { name: "Imports", obs: imp, color: css("--s4"), width: 2.2 },
+      ],
+      fmt: "#,##0", unit: "R m", ranges: ["10Y","MAX"], defRange: "MAX"
+    });
+  } catch (e) {}
+
+  try {
+    const exp2 = sO("KBP5000K") || [], imp2 = sO("KBP5003K") || [];
+    const bal = spreadSeries(exp2, imp2);
+    chartCard(grid, "half", "Goods trade balance (quarterly)", "Exports minus imports.", {
+      series: [{ name: "Trade balance", obs: bal, color: css("--s3"), fill: true }],
+      fmt: "#,##0", unit: "R m", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX"
+    });
+  } catch (e) {}
+
+  try {
+    const exp3 = sO("CURX600A") || [], imp3 = sO("CURM600A") || [];
+    chartCard(grid, "half", "Merchandise trade (monthly)", "A finer-grained, higher-frequency read on the same goods trade.", {
+      series: [
+        { name: "Exports", obs: exp3, color: css("--s1"), width: 2.2 },
+        { name: "Imports", obs: imp3, color: css("--s4"), width: 2.2 },
+      ],
+      fmt: "#,##0", unit: "R m", ranges: ["5Y","10Y","MAX"], defRange: "10Y"
+    });
+  } catch (e) {}
+
+  try {
+    const exp4 = sO("KBP5000K") || [], imp4 = sO("KBP5003K") || [];
+    chartCard(grid, "half", "Export and import growth", "12-month % change, quarterly goods trade.", {
+      series: [
+        { name: "Exports (y/y)", obs: yoyGeneric(exp4), color: css("--s1"), width: 2.2 },
+        { name: "Imports (y/y)", obs: yoyGeneric(imp4), color: css("--s4"), width: 2.2 },
+      ],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX"
+    });
+  } catch (e) {}
+
+  try {
+    const bal4 = sO("KBP5000K") && sO("KBP5003K") ? spreadSeries(sO("KBP5000K"), sO("KBP5003K")) : [];
+    const gdp = sO("KBP6006L") || [];
+    const pctGdp = ratioSeries(rollSumN(bal4, 4), gdp, 100);
+    chartCard(grid, "half", "Trade balance — % of GDP", "Rolling 4-quarter trade balance against nominal GDP (current prices, seasonally adjusted at an annual rate).", {
+      series: [{ name: "Trade balance (% of GDP)", obs: pctGdp, color: css("--s3"), fill: true }],
+      fmt: "0.0", unit: "%", zeroLine: true, ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "Both sides annualised on a comparable basis — the balance as a rolling 4-quarter sum, GDP already published at a seasonally adjusted annual rate."
+    });
+  } catch (e) {}
+
+  try {
+    const exGold = sO("KBP5036J") || [], inGold = sO("KBP5037J") || [];
+    chartCard(grid, "half", "Terms of trade", "Export prices relative to import prices — annual, the only granularity available for this index.", {
+      series: [
+        { name: "Excluding gold", obs: exGold, color: css("--s2"), width: 2.2 },
+        { name: "Including gold", obs: inGold, color: css("--s6"), width: 2.2 },
+      ],
+      fmt: "0.0", ranges: ["10Y","MAX"], defRange: "MAX",
+      note: "A rise means South Africa earns more per unit exported relative to what it pays per unit imported — favourable; a fall is unfavourable. Only published annually, so this lags the quarterly/monthly trade charts above by design, not staleness."
+    });
+  } catch (e) {}
+}
+
 /* ---------- Real economy ---------- */
 function buildEconomy(root) {
   root.appendChild(el("div", "intro",
@@ -2600,8 +2959,13 @@ function buildEconomy(root) {
       { name: "CPI (y/y)", obs: sO("CPI1000F") || [], color: css("--s5"), width: 2.2 },
       { name: "PPI (y/y)", obs: sO("PPI1000F") || [], color: css("--s3") },
     ],
-    fmt: "0.0", unit: "%", zeroLine: true, band: { y0: 3, y1: 6 }, ranges: ["5Y","10Y","MAX"], defRange: "10Y",
-    note: "Shaded band = the 3-6% target; the MPC now aims at the 3% lower edge."
+    fmt: "0.0", unit: "%", zeroLine: true,
+    band: [
+      { to: INFLATION_TARGET_CUTOVER, y0: 3, y1: 6 },
+      { from: INFLATION_TARGET_CUTOVER, y0: 2, y1: 4 },
+    ],
+    ranges: ["5Y","10Y","MAX"], defRange: "10Y",
+    note: "Shaded band = the inflation target -- 3-6% until 12 Nov 2025, then a 3% point target with a 1pp tolerance band (2-4%)."
   });
 
   const sd = D.sdds;
@@ -2686,7 +3050,14 @@ function mcmTable(xml) {
   for (const cols of lines) {
     if (!cols.some(c => c)) continue;
     const tr = el("tr");
-    tr.innerHTML = cols.map(c => `<td>${/^-?[\d\s  .,%]+$/.test(c) && c.trim() ? `<span class="num" style="font-variant-numeric:tabular-nums">${esc(c)}</span>` : esc(c)}</td>`).join("");
+    // The nowrap/right-align rule targets `td.num`, not a nested span --
+    // putting the class on the span only (the original approach) meant a
+    // numeric-looking value in a narrow column (e.g. a "% change" figure)
+    // could still line-wrap, which is the spillover bug this was fixed for.
+    tr.innerHTML = cols.map(c => {
+      const isNum = /^-?[\d\s  .,%]+$/.test(c) && c.trim();
+      return isNum ? `<td class="num" style="font-variant-numeric:tabular-nums">${esc(c)}</td>` : `<td>${esc(c)}</td>`;
+    }).join("");
     body.appendChild(tr);
   }
   tb.appendChild(body);
@@ -2769,11 +3140,21 @@ function catalog() {
         name: s.name.replace(/^-+>\s*/, "· "), code: s.code, obs: s.obs, fmt: s.fmt, desc: s.desc });
     }
   }
+  const BOP_TRADE_CODES = new Set(["KBP5000K","KBP5003K","KBP5007K","KBP5002K","KBP5004K","KBP5680K",
+    "KBP5681K","KBP5682K","KBP5764K","KBP5656K","KBP5640K","KBP5660K","KBP5644K","KBP5677K",
+    "KBP5672K","KBP5666K","KBP5650K","KBP5679K","KBP5766K","CURX600A","CURM600A"]);
+  const FX_INDEX_CODES = new Set(["BOP5393M","BOP5395M"]);
   for (const code of Object.keys(D.daily || {})) {
     const s = D.daily[code];
     const isDaily = s.obs.length && s.obs[0][0].length >= 10;
-    const isKBP = /^KBP\d/.test(code);
+    // Checks the actual source dict, not just the code's naming pattern --
+    // KBP5000K/KBP5003K (terms-of-trade) happen to match /^KBP\d/ too but
+    // come from the reliable WebIndicators deep-fetch, not the download-
+    // facility catalog, so they don't belong grouped with the latter.
+    const isKBP = !!(D.kbp && D.kbp[code]);
     const group = isKBP ? "Quarterly Bulletin gap-fill (credit card, bond yields)"
+      : BOP_TRADE_CODES.has(code) ? "Balance of payments & trade (full history)"
+      : FX_INDEX_CODES.has(code) ? "Effective exchange rates (full history)"
       : isDaily ? "Daily rates & FX (full history)" : "Inflation & headline indicators (full history)";
     out.push({ id: `d|${code}`, group, cat: "", name: s.name, code, obs: s.obs, fmt: s.fmt, desc: s.desc });
   }
@@ -2781,20 +3162,11 @@ function catalog() {
   catalog._c = out;
   return out;
 }
-function transform(obs, kind) {
-  if (kind === "yoy") {
-    if (obs.length && obs[0][0].length >= 10) {
-      const out = [];
-      for (const [p, v] of obs) {
-        const ref = obsAtOrBefore(obs, pt(p) - 365 * 86400e3);
-        if (ref && ref[1] && pt(p) - pt(ref[0]) < 380 * 86400e3) out.push([p, (v/ref[1] - 1) * 100]);
-      }
-      return out;
-    }
-    return yoyFromLevels(obs);
-  }
-  if (kind === "mom") return momFromLevels(obs);
-  if (kind === "sum12") return roll12Sum(obs);
+function transform(obs, kind, n) {
+  if (kind === "yoy") return yoyGeneric(obs);
+  if (kind === "chg") return chgGeneric(obs);
+  if (kind === "ma") return movingAvgN(obs, n || defaultWindowN(obs));
+  if (kind === "sum") return rollSumN(obs, n || defaultWindowN(obs));
   if (kind === "idx") return index100(obs, null);
   return obs;
 }
@@ -2865,8 +3237,8 @@ function formulaSeries(src, sel) {
   return out;
 }
 /* ---------- Glossary: plain-English decoder for the catalogue's jargon ----------
-   The full ~2320-code catalogue mostly carries the SARB's own (already fairly
-   descriptive) series names -- what's missing for a newcomer is the acronyms
+   The full Quarterly Bulletin catalogue mostly carries the SARB's own (already
+   fairly descriptive) series names -- what's missing for a newcomer is the acronyms
    and institutional concepts those names lean on. Rather than hand-write a
    blurb per series (infeasible at this scale, and unnecessary where the SARB's
    own wording is already plain), this is a compact, reusable term dictionary
@@ -2897,6 +3269,7 @@ const GLOSSARY = [
     ["GOVI", "The JSE/SARB government bond total-return index, tracking the all-bond market's price and income return together."],
     ["Strip bond", "A bond stripped into separate coupon and principal payments, each tradeable on its own — a niche instrument occasionally seen on the Market Operations desk notices."],
     ["Gilt switch", "The Treasury swapping investors out of a maturing (or unpopular) bond into another, smoothing the redemption profile without needing fresh cash."],
+    ["Debt securities issuance", "New bonds or notes issued into the domestic capital market during a period — the primary-market counterpart to the secondary-market trading volumes shown elsewhere."],
   ]],
   ["Monetary aggregates & credit", [
     ["M1", "The narrowest money-supply measure — cash in circulation plus demand (transaction) deposits."],
@@ -2905,22 +3278,44 @@ const GLOSSARY = [
     ["PSCE", "Private Sector Credit Extension — total bank lending to households and companies; a leading indicator of both economic activity and financial-stability risk."],
     ["Counterparts of M3", "The balance-sheet items (credit extension, net foreign assets, government deposits, etc.) that mechanically explain what drove M3 up or down in a given month."],
     ["Securitisation", "Bundling loans (e.g. mortgages, vehicle finance) into tradeable securities — tracked separately since it moves credit off bank balance sheets without new lending."],
+    ["Locational banking statistics", "Cross-border banking data compiled on a residency basis (BIS-style) — banks' foreign claims and liabilities by the country/sector of the counterparty, distinct from the domestic credit aggregates."],
+    ["Management companies of collective investment schemes", "The asset-management firms that run unit trusts and other pooled investment vehicles — tracked by the SARB as their own non-bank financial institutional sector."],
+    ["Official retirement funds", "Government-sector pension funds (e.g. the GEPF) — tracked separately from privately-administered occupational funds in the SARB's financial-sector statistics."],
+    ["Private retirement funds", "Privately-administered occupational and retirement annuity funds — the non-government counterpart to official retirement funds."],
+    ["Other financial intermediaries", "A residual non-bank financial-sector category (excludes banks, insurers and retirement funds) — covers entities like finance and leasing companies."],
+    ["Trust companies", "Institutions that administer trusts and deceased estates — tracked as their own financial-sector category in the SARB's institutional breakdowns."],
+    ["BA930", "The standard regulatory return South African banks file with the SARB — the source of the lending- and deposit-rate breakdowns tagged \"BA930\" in the catalogue."],
+    ["Public Investment Corporation", "PIC — the state-owned asset manager that invests, among others, the Government Employees Pension Fund's assets; one of South Africa's largest institutional investors."],
+    ["Land Bank", "The Land and Agricultural Development Bank of South Africa — a state-owned development finance institution specialising in agricultural lending."],
+    ["Mutual Banks", "A depositor-owned (not shareholder-owned) type of bank registered under South Africa's Mutual Banks Act — its own category, distinct from ordinary (shareholder-owned) banks."],
+    ["Unit trusts", "A pooled investment vehicle (collective investment scheme) — investors buy units representing a share of a professionally-managed portfolio."],
+    ["Inflation expectations", "Survey-based measure of what analysts, business and unions expect inflation to be over a future horizon — the BER (Bureau for Economic Research) runs this survey for the SARB; distinct from actual or targeted inflation."],
   ]],
   ["Inflation", [
     ["CPI", "Consumer Price Index — the basket-of-goods measure of price change facing consumers; South Africa's targeted (headline) inflation measure."],
     ["PPI", "Producer Price Index — price change at the factory/farm gate, upstream of CPI; often a leading indicator for where consumer inflation is headed."],
-    ["Inflation target", "The SARB's mandated 3-6% band for CPI inflation (informally anchored near the midpoint) — the reason the MPC meets and sets the repo rate."],
+    ["Inflation target", "The SARB's mandated target for CPI inflation — a 3% point target with a 1 percentage point tolerance band (2-4%) since 12 November 2025, replacing the previous 3-6% range — the reason the MPC meets and sets the repo rate."],
     ["Core inflation", "CPI excluding volatile items like food and energy (also called CPIX) — used to judge underlying price pressure separate from one-off shocks."],
   ]],
   ["External sector & FX", [
     ["BOP", "Balance of Payments — the full record of SA's transactions with the rest of the world, split into the current, capital and financial accounts."],
     ["Current account", "Trade in goods and services plus income and transfers — a deficit means SA is a net borrower from the rest of the world that period."],
     ["Financial account", "Cross-border investment flows (direct, portfolio, other) that finance the current-account balance."],
+    ["Terms of trade", "The price of what a country exports relative to the price of what it imports — a rise means more purchasing power abroad for the same volume of exports, a fall means the opposite; only published annually by the SARB, unlike the quarterly/monthly trade-value data it sits alongside."],
     ["IIP", "International Investment Position — SA's stock of foreign assets minus foreign liabilities at a point in time; the balance-sheet counterpart to the BOP's flow measures."],
     ["NEER", "Nominal Effective Exchange Rate — the rand's trade-weighted value against a basket of trading-partner currencies; a rise means broad rand strength, not just against one currency."],
     ["REER", "Real Effective Exchange Rate — NEER adjusted for relative inflation; the better gauge of whether the rand is cheap or expensive for actual competitiveness."],
     ["Import cover", "Months of imports the gross reserves could pay for if all other inflows stopped — a traditional (if blunt) reserve-adequacy yardstick."],
     ["GFECRA", "Gold and Foreign Exchange Contingency Reserve Account — absorbs valuation gains/losses on the SARB's gold and FX reserves; its 2024 partial settlement to fund government spending is the \"GFECRA settlement\" referenced in the deficit-financing chart."],
+    ["Services, income and transfers", "The current-account components of the Balance of Payments other than merchandise trade — services (e.g. travel, transport), primary income (e.g. compensation of employees, investment income) and secondary income (current transfers like remittances and aid)."],
+    ["Services, income & transfer", "Same concept as \"Services, income and transfers\" above — the SARB's own catalogue spells this section heading two different ways (\"and transfers\" in some tables, \"& transfer receipts\"/\"& transfer payments\" split by direction in others)."],
+    ["Capital account", "In the Balance of Payments, a small account distinct from the financial account — records capital transfers and the acquisition/disposal of non-produced, non-financial assets (e.g. patents), not cross-border investment flows."],
+    ["Capital movements of assets", "The Financial Account's asset side — South African residents' investment abroad (direct, portfolio and other investment)."],
+    ["Capital movements of liabilities", "The Financial Account's liability side — foreign investment into South Africa (direct, portfolio and other investment)."],
+    ["Foreign debt of S.A.", "South Africa's total external debt owed to non-resident creditors, broken down by borrowing sector (government, monetary sector, private sector)."],
+    ["Balance of Payments", "The full record of South Africa's economic transactions with the rest of the world over a period, split into the current, capital and financial accounts (same concept as \"BOP\" above, spelled out in full in these series names)."],
+    ["Portfolio investment", "Cross-border investment in tradeable securities (shares, bonds) that doesn't amount to a controlling stake — one of the financial account's three categories, alongside direct and other investment."],
+    ["Average daily net turnover", "The average value of foreign-exchange transactions dealt per day over the reporting period — a measure of FX market activity, not a stock or balance."],
   ]],
   ["Government finance", [
     ["GFS", "Government Finance Statistics — the IMF-standardised framework the SARB's fiscal tables follow, splitting government cash flows into revenue, expenditure and financing by instrument."],
@@ -2928,12 +3323,29 @@ const GLOSSARY = [
     ["Primary balance", "The budget balance excluding interest payments on existing debt — shows whether policy itself (not the debt legacy) is tightening or loosening."],
     ["PSBR", "Public Sector Borrowing Requirement — the cash government (and sometimes the wider public sector) needs to raise from markets to cover its deficit."],
     ["Debt-to-GDP", "Government debt as a share of the whole economy's output — the standard cross-country gauge of fiscal sustainability."],
+    ["Consolidated central government", "National government departments plus the extra-budgetary institutions and social security funds that sit outside the main Budget, combined and netted of transfers between them."],
+    ["Consolidated general government", "Consolidated central government plus provincial and local government, netted of transfers between all levels — the broadest GFS government aggregate."],
+    ["Non-financial public-sector borrowing requirement", "The combined net financing need of consolidated general government AND the non-financial public enterprises — broader than the national government's own PSBR alone."],
+    ["Extra-budgetary institutions", "Public entities that perform government functions (e.g. some public agencies) but sit outside the main Budget appropriation — tracked separately in GFS before being consolidated back in."],
+    ["public enterprises", "State-owned companies tracked as their own institutional sector, split into non-financial (produce goods/services, e.g. Eskom, Transnet) and financial (banking/investment, e.g. Land Bank, PIC) public enterprises."],
+    ["Social security funds", "Government-mandated contributory funds such as the UIF and Compensation Fund — their own institutional sector, distinct from the Budget and from retirement funds."],
+    ["marketable stock debt", "Government or public-enterprise debt issued as tradeable bonds/stock (as opposed to non-marketable loans) — broken down here by who holds it (banks, non-bank private sector, public sector, non-residents)."],
   ]],
   ["Real economy & national accounts", [
     ["GDP", "Gross Domestic Product — the total value of goods and services produced in SA; its growth rate is the single most-watched real-economy number."],
     ["GNI", "Gross National Income — GDP plus net income SA residents earn from abroad (or pay abroad); the better measure of what South Africans actually earn, versus what's produced within the borders."],
     ["Gross saving", "The share of GDP not consumed — the domestic pool available (before foreign financing) to fund investment."],
     ["Seasonally adjusted", "Data with predictable within-year patterns (e.g. December retail spikes) removed so period-to-period comparisons reflect the underlying trend, not the calendar."],
+    ["Allocation of primary income account", "A national-accounts table showing how income generated in production (GDP) is distributed to the factors that produced it — wages, property income, taxes and subsidies — to arrive at Gross National Income."],
+    ["Secondary distribution of income account", "The national-accounts table showing how income is redistributed after production via current transfers (taxes, social contributions and benefits) to arrive at disposable income."],
+    ["Use of disposable income account", "The national-accounts table showing how disposable income splits between final consumption and saving."],
+    ["FBSAA", "The SARB's national financial balance-sheet accounts — financial assets and liabilities of the whole economy (and each institutional sector) broken down by instrument: currency and deposits, debt securities, loans, equity, and so on."],
+    ["Production account", "The first table in the national-accounts sequence — output minus intermediate consumption, arriving at gross value added (the building block of GDP)."],
+    ["Generation of income account", "The national-accounts table showing how gross value added from production splits into compensation of employees, taxes (less subsidies) on production, and gross operating surplus."],
+    ["External account of primary incomes and current transfers", "The rest-of-world counterpart in the national accounts sequence — combines primary income and current-transfer flows between South Africa and the rest of the world, feeding into GNI."],
+    ["Gross fixed capital formation", "Investment spending — new buildings, machinery, infrastructure and similar durable assets — one of the four expenditure components of GDP."],
+    ["Fixed capital stock", "The estimated current value of the economy's accumulated durable capital assets (buildings, machinery, infrastructure) — a stock measure, distinct from the flow measure gross fixed capital formation."],
+    ["Change in inventories", "The value of unsold stock built up or run down during a period — one of the (usually small and volatile) expenditure components of GDP."],
   ]],
   ["Institutional & market operations", [
     ["Desk notices", "Daily announcements from the SARB's Market Operations desk: repo auction invitations/results, bond and T-bill auction results, money-market liquidity summaries."],
@@ -2942,7 +3354,7 @@ const GLOSSARY = [
   ]],
   ["Data & methodology", [
     ["SDDS", "Special Data Dissemination Standard — the IMF's data-transparency standard; the SARB's SDDS tables (real, financial, external, fiscal sectors) follow this internationally comparable structure."],
-    ["KBP code", "The Quarterly Bulletin's internal numbering scheme for its ~2,300 published time series; the full-catalogue series on this dashboard are fetched and labelled by these codes when no friendlier name exists."],
+    ["KBP code", "The Quarterly Bulletin's internal numbering scheme for its thousands of published time series; the full-catalogue series on this dashboard are fetched and labelled by these codes when no friendlier name exists."],
     ["YoY", "Year-on-year — percentage change versus the same point 12 months earlier; the standard way to strip seasonal noise out of a level series."],
     ["MoM", "Month-on-month — percentage change versus the prior month."],
   ]],
@@ -2963,11 +3375,10 @@ function glossaryHints(text) {
 }
 function exHoverText(s) {
   // KBP catalogue entries carry only one text field from the SARB (LongDesc),
-  // already used as the series name -- long enough on its own to answer "what
-  // does this measure" without a redundant second line. The generic fallback
-  // is only worth showing for short, cryptic names that genuinely lack one.
-  const selfDescriptive = !s.desc && s.name && s.name.length > 45;
-  const def = s.desc || (selfDescriptive ? null : (s.cat ? `${s.cat} — part of the "${s.group}" release. No official description published for this series.` :
+  // already used as the series name -- a second "no description" line would
+  // be actively misleading here, since there was never a separate one to miss.
+  const isKBP = !!(D.kbp && D.kbp[s.code]);
+  const def = s.desc || (isKBP ? null : (s.cat ? `${s.cat} — part of the "${s.group}" release. No official description published for this series.` :
     `Part of "${s.group}". No official description published for this series.`));
   const range = s.obs && s.obs.length ? `${s.obs[0][0]} → ${s.obs[s.obs.length-1][0]} · ${s.obs.length} obs` : "no data";
   const hints = glossaryHints(`${s.name} ${def || ""}`);
@@ -3006,23 +3417,47 @@ function buildExplorer(root) {
   list.appendChild(items);
 
   const chipRow = el("div", "selchips");
+  const seriesCtrlRow = el("div", null);
+  seriesCtrlRow.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-bottom:8px";
   const ctrl = el("div", null);
   ctrl.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px";
   const selStyle = "padding:5px 9px;border:1px solid var(--axis);border-radius:8px;background:var(--card-2);color:var(--ink);font:inherit;font-size:13px";
-  const tsel = el("select");
-  tsel.style.cssText = selStyle;
-  for (const [v, l] of [["lvl","Level"],["yoy","12-month % change"],["mom","1-month % change"],["sum12","12-month rolling sum"],["idx","Index = 100 at start"]])
-    tsel.appendChild(new Option(l, v));
-  ctrl.appendChild(tsel);
   const stySel = el("select");
   stySel.style.cssText = selStyle;
   for (const [v, l] of [["line","Line"],["area","Area"],["bar","Bars"],["scatter","Scatter"],["stackbar","Stacked bars"],["stackarea","Stacked area"]]) stySel.appendChild(new Option(l, v));
   ctrl.appendChild(stySel);
+  const fetchWrap = el("div", null);
+  fetchWrap.style.cssText = "position:relative;display:inline-block";
   const fetchBox = el("input");
   fetchBox.placeholder = "any SARB code, e.g. KBP6006S";
   fetchBox.style.cssText = selStyle + ";width:170px";
+  const fetchSuggest = el("div", null);
+  fetchSuggest.style.cssText = "display:none;position:absolute;top:100%;left:0;margin-top:2px;width:320px;max-height:260px;overflow-y:auto;background:var(--card);border:1px solid var(--axis);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.15);z-index:50";
+  fetchWrap.appendChild(fetchBox); fetchWrap.appendChild(fetchSuggest);
   const fetchBtn = el("button", "minibtn", "fetch live ↯");
-  ctrl.appendChild(fetchBox); ctrl.appendChild(fetchBtn);
+  ctrl.appendChild(fetchWrap); ctrl.appendChild(fetchBtn);
+  function renderFetchSuggest() {
+    const q = fetchBox.value.trim().toUpperCase();
+    fetchSuggest.innerHTML = "";
+    if (q.length < 3) { fetchSuggest.style.display = "none"; return; }
+    const matches = catalog().filter(s => s.code.toUpperCase().startsWith(q)).slice(0, 20);
+    if (!matches.length) { fetchSuggest.style.display = "none"; return; }
+    for (const s of matches) {
+      const b = el("button", "exitem");
+      b.style.cssText = "display:block;width:100%;text-align:left;border-radius:0;white-space:normal;word-break:break-word";
+      b.innerHTML = `${esc(s.name)} <span class="code">${esc(s.code)}</span>${s.freq ? ` <span class="freqtag">${esc(s.freq)}</span>` : ""}`;
+      b.addEventListener("pointerenter", e => showTip(e.clientX, e.clientY, exHoverText(s)));
+      b.addEventListener("pointermove", e => showTip(e.clientX, e.clientY, exHoverText(s)));
+      b.addEventListener("pointerleave", hideTip);
+      b.onmousedown = e => e.preventDefault(); // keep focus so blur doesn't fire before click
+      b.onclick = () => { hideTip(); toggleSel(s); fetchBox.value = ""; fetchSuggest.style.display = "none"; fetchBtn.textContent = "fetch live ↯"; };
+      fetchSuggest.appendChild(b);
+    }
+    fetchSuggest.style.display = "block";
+  }
+  fetchBox.addEventListener("input", renderFetchSuggest);
+  fetchBox.addEventListener("focus", renderFetchSuggest);
+  fetchBox.addEventListener("blur", () => setTimeout(() => { fetchSuggest.style.display = "none"; }, 150));
   // formula row
   const frow = el("div", null);
   frow.style.cssText = "display:none;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px";
@@ -3033,6 +3468,7 @@ function buildExplorer(root) {
   const fHint = el("span", null, "<span style='color:var(--muted);font-size:12px'>letters = selected series in order; result becomes a new chip (remove the sources to see it alone)</span>");
   frow.appendChild(fBox); frow.appendChild(fBtn); frow.appendChild(fHint);
   main.appendChild(chipRow);
+  main.appendChild(seriesCtrlRow);
   main.appendChild(ctrl);
   main.appendChild(frow);
   const chartMount = el("div", "card");
@@ -3061,13 +3497,16 @@ function buildExplorer(root) {
     }
     if (!n) items.appendChild(el("div", "errnote", "No matches."));
   }
+  const EX_KINDS = [["lvl","Level"],["chg","% change"],["yoy","YoY %"],["ma","Moving avg"],["sum","Rolling sum"],["idx","Index = 100"]];
   function toggleSel(s) {
     const i = exSel.findIndex(x => x.id === s.id);
-    if (i >= 0) exSel.splice(i, 1); else exSel.push(s);
+    if (i >= 0) exSel.splice(i, 1);
+    else { s.viewKind = s.viewKind || "lvl"; s.maN = s.maN || defaultWindowN(s.obs); exSel.push(s); }
     renderList(); renderChart();
   }
   function renderChart() {
     chipRow.innerHTML = "";
+    seriesCtrlRow.innerHTML = "";
     exSel.forEach((s, i) => {
       const ch = el("span", "selchip");
       const letter = i < 26 ? String.fromCharCode(97 + i) : "·";
@@ -3078,6 +3517,25 @@ function buildExplorer(root) {
       x.onclick = () => { exSel.splice(exSel.indexOf(s), 1); renderList(); renderChart(); };
       ch.appendChild(x);
       chipRow.appendChild(ch);
+
+      // per-series transform control -- each selected series keeps its own
+      // view/window state (s.viewKind/s.maN) so one chip can show a raw level
+      // while another shows YoY % on the same chart, independently.
+      const row = el("div", null);
+      row.style.cssText = "display:flex;gap:6px;align-items:center;font-size:12px";
+      row.appendChild(el("span", null, `<span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${css(PAL[i % PAL.length])};margin-right:5px"></span>${esc(s.name.slice(0, 42))}`));
+      const ksel = el("select");
+      ksel.style.cssText = selStyle + ";padding:3px 6px;font-size:12px";
+      for (const [v, l] of EX_KINDS) ksel.appendChild(new Option(l, v));
+      ksel.value = s.viewKind || "lvl";
+      const nIn = el("input");
+      nIn.type = "number"; nIn.min = "2"; nIn.max = "60"; nIn.value = s.maN || defaultWindowN(s.obs);
+      nIn.style.cssText = selStyle + ";width:52px;padding:3px 5px;font-size:12px";
+      nIn.style.display = (s.viewKind === "ma" || s.viewKind === "sum") ? "" : "none";
+      ksel.onchange = () => { s.viewKind = ksel.value; nIn.style.display = (s.viewKind === "ma" || s.viewKind === "sum") ? "" : "none"; renderChart(); };
+      nIn.onchange = () => { s.maN = Math.max(2, Math.min(60, parseInt(nIn.value) || s.maN)); nIn.value = s.maN; renderChart(); };
+      row.appendChild(ksel); row.appendChild(nIn);
+      seriesCtrlRow.appendChild(row);
     });
     frow.style.display = exSel.length >= 1 ? "flex" : "none";
     chartMount.innerHTML = "";
@@ -3085,26 +3543,33 @@ function buildExplorer(root) {
       chartMount.appendChild(el("div", "errnote", "Select series on the left to chart them here."));
       return;
     }
-    const kind = tsel.value;
     const head = el("div", "cardhead");
     head.appendChild(el("h3", null, exSel.length === 1 ? esc(exSel[0].name) : exSel.length + " series"));
     const tools = el("div", "tools");
     head.appendChild(tools);
     chartMount.appendChild(head);
     if (exSel.length === 1 && exSel[0].desc) chartMount.appendChild(el("div", "cardsub", esc(exSel[0].desc)));
+    const kindOf = s => s.viewKind || "lvl";
+    const kinds = new Set(exSel.map(kindOf));
+    const uniform = kinds.size === 1 ? [...kinds][0] : null;
+    const fmtFor = k => k === "lvl" ? null : k === "sum" ? "#,##0" : "0.0";
+    const unitFor = k => (k === "yoy" || k === "chg") ? "%" : undefined;
     try {
       new Chart(chartMount, {
         title: exSel.map(s => s.name).join(" + ").slice(0, 120),
-        series: exSel.map((s, i) => ({ name: s.name, obs: transform(s.obs, kind), color: css(PAL[i % PAL.length]), dash: i >= PAL.length })),
-        fmt: kind === "lvl" ? (exSel.length === 1 ? exSel[0].fmt : null) : (kind === "sum12" ? "#,##0" : "0.0"),
-        unit: kind === "yoy" || kind === "mom" ? "%" : undefined,
-        zeroLine: kind === "yoy" || kind === "mom", logToggle: kind === "lvl" || kind === "idx",
-        style: stySel.value,
+        series: exSel.map((s, i) => ({
+          name: s.name, obs: transform(s.obs, kindOf(s), s.maN), color: css(PAL[i % PAL.length]), dash: i >= PAL.length,
+          fmt: uniform ? undefined : fmtFor(kindOf(s)), unit: uniform ? undefined : unitFor(kindOf(s)),
+        })),
+        fmt: uniform ? (uniform === "lvl" ? (exSel.length === 1 ? exSel[0].fmt : null) : fmtFor(uniform)) : null,
+        unit: uniform ? unitFor(uniform) : undefined,
+        zeroLine: [...kinds].some(k => k === "yoy" || k === "chg"),
+        logToggle: uniform === "lvl" || uniform === "idx",
+        style: stySel.value, viewToggle: false,
         ranges: ["1Y","5Y","10Y","MAX"], defRange: "MAX", toolsEl: tools, height: 340
       });
     } catch (e) { chartMount.appendChild(el("div", "errnote", "Could not chart — " + esc(e.message))); }
   }
-  tsel.onchange = renderChart;
   stySel.onchange = renderChart;
   search.oninput = () => renderList();
   typeSel.onchange = () => renderList();
@@ -3115,7 +3580,8 @@ function buildExplorer(root) {
     try {
       const obs = formulaSeries(src.toLowerCase(), exSel);
       exSel.push({ id: "x|" + (exDerivedN++), group: "Derived", cat: "", name: src, code: "formula",
-        obs, fmt: null, desc: "Derived series: " + src + " over the selection at the time it was created." });
+        obs, fmt: null, viewKind: "lvl", maN: defaultWindowN(obs),
+        desc: "Derived series: " + src + " over the selection at the time it was created." });
       fBox.value = "";
       renderChart();
     } catch (e) {
@@ -3166,9 +3632,10 @@ const TAB_BLURBS = {
   capital: "Bond yields back to 1949, the government yield curve, and activity on the JSE's share, bond and derivative markets, including foreign flows.",
   gov: "National government's cash flows — revenue, spending, the deficit and how it's financed — plus the debt and balance ratios that frame every Budget speech.",
   external: "The Balance of Payments (current, capital and financial accounts), the International Investment Position, and the SARB's gold and foreign-exchange reserves.",
+  trade: "Goods exports vs imports (quarterly and monthly) and the terms-of-trade index (annual) — what South Africa earns for what it sells abroad versus what it pays for what it buys.",
   economy: "GDP, inflation, employment and the other seasonally-adjusted real-economy indicators the SARB tracks — the broadest view of how the economy is actually doing.",
   ops: "The Market Operations desk's own daily notices: repo auctions, government bond and T-bill auction results, and money-market liquidity summaries.",
-  explorer: "Every series held locally, including the full ~2,300-code Quarterly Bulletin catalogue — search, filter, combine with arbitrary formulas, and chart however you like.",
+  explorer: "Every series held locally, including the full Quarterly Bulletin catalogue — search, filter, combine with arbitrary formulas, and chart however you like.",
 };
 function buildGuide(root) {
   root.appendChild(el("div", "intro",
@@ -3187,7 +3654,7 @@ function buildGuide(root) {
   const kbpCount = catalog().filter(s => /^KBP\d/.test(s.code)).length;
   cov.cardEl.appendChild(el("div", null,
     `<p style="margin:0 0 6px">${esc(String(catalog().length))} series held locally right now, including ` +
-    `${esc(String(kbpCount))} from the Quarterly Bulletin's ~2,320-code catalogue (identified by their <b>KBP</b> ` +
+    `${esc(String(kbpCount))} from the Quarterly Bulletin's full published catalogue (identified by their <b>KBP</b> ` +
     `code — see "KBP code" in the glossary below). The catalogue is fetched incrementally in the background by the ` +
     `updater script and grows over time without any changes needed here.</p>` +
     `<p style="margin:0;color:var(--muted);font-size:12.5px">Most KBP series carry the SARB's own description as-is — ` +
@@ -3269,9 +3736,10 @@ const TABS = [
   { id: "capital", label: "Capital Markets", build: buildCapital, needs: ["MRDCM"] },
   { id: "gov", label: "Government Finance", build: buildGov, needs: ["MRDFG"] },
   { id: "external", label: "External & Gold", build: buildExternal, needs: ["MRDIE"] },
+  { id: "trade", label: "Terms of Trade", build: buildTrade },
   { id: "economy", label: "Real Economy", build: buildEconomy, needs: ["MRDEI"] },
-  { id: "ops", label: "Market Operations", build: buildOps },
   { id: "explorer", label: "Explorer", build: buildExplorer },
+  { id: "ops", label: "Market Operations", build: buildOps },
   { id: "guide", label: "Guide", build: buildGuide },
 ];
 let currentTab = "overview";
@@ -3327,6 +3795,23 @@ function boot() {
         ensureDeep("EXCZ001D", 1980), ensureDeep("EXCZ002D", 1980), ensureDeep("EER4504A", 1990),
         ensureDeep("CPI1000F", 1960, false), ensureDeep("PPI1000F", 1960, false),
         ensureDeep("BOP5393M", 1970, false), ensureDeep("BOP5395M", 1970, false), ensureDeep("MMSM001R", 1960, false),
+        // Quarterly goods trade + monthly merchandise trade totals -- these
+        // K-suffix/CUR-prefix codes are CORS-open and give genuine
+        // quarterly/monthly data back to 2000/2012. Their J-suffix
+        // download-facility counterparts (KBP5000J etc., in kbp-manifest.json)
+        // are annual-only but go back to 1946-1985 -- kept as COMPLEMENTARY
+        // long-history series, not discarded as duplicates.
+        ensureDeep("KBP5000K", 2000, false), ensureDeep("KBP5003K", 2000, false),
+        ensureDeep("KBP5007K", 2000, false), ensureDeep("KBP5002K", 2000, false),
+        ensureDeep("KBP5004K", 2000, false), ensureDeep("KBP5680K", 2000, false),
+        ensureDeep("KBP5681K", 2000, false), ensureDeep("KBP5682K", 2000, false),
+        ensureDeep("KBP5764K", 2000, false), ensureDeep("KBP5656K", 2000, false),
+        ensureDeep("KBP5640K", 2000, false), ensureDeep("KBP5660K", 2000, false),
+        ensureDeep("KBP5644K", 2000, false), ensureDeep("KBP5677K", 2000, false),
+        ensureDeep("KBP5672K", 2000, false), ensureDeep("KBP5666K", 2000, false),
+        ensureDeep("KBP5650K", 2000, false), ensureDeep("KBP5679K", 2000, false),
+        ensureDeep("KBP5766K", 2000, false),
+        ensureDeep("CURX600A", 2012, false), ensureDeep("CURM600A", 2012, false),
         ...GRAPH_GROUPS.map(([gk, ep]) => ensureGraphs(gk, ep)),
         // MCM desk notices are now fetched inside liteRefresh() itself (runs
         // on every load, not just the no-sidecar cold boot), so nothing
