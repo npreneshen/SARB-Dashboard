@@ -5,7 +5,7 @@ A modernisation of a personal Excel based dashboard.
 Serves the complete public dataset. Companion to the SA CPI dashboard,
 built on the same pattern: one HTML file, one PowerShell updater, one data sidecar.
 
-**Updated 22 July 2026 to include additional +1000 account codes in the Explorer tab**
+**Updated 23 July 2026 to include additional +2000 account codes in the Explorer tab**
 
 **[Click here to try the SARB Dashboard →](https://za-macro.pages.dev)** **https://za-macro.pages.dev** 
 
