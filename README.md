@@ -7,9 +7,9 @@ built on the same pattern: one HTML file, one PowerShell updater, one data sidec
 
 **Updated 23 July 2026 to include additional +2000 account codes in the Explorer tab**
 
-**[Click here to try the SARB Dashboard →](https://za-macro.pages.dev)** **https://za-macro.pages.dev** 
+**[Click here to try the SARB Dashboard →](https://sarb.metiscore.space/)** **https://sarb.metiscore.space/** 
 
-**[Click here to try the SA CPI Dashboard →](https://sacpi.pages.dev)** **https://sacpi.pages.dev** 
+**[Click here to try the SA CPI Dashboard →](http://sacpi.metiscore.space/)** **http://sacpi.metiscore.space/** 
 
 > Every chart has a table view, CSV and PNG export. Tables export to CSV and rows with a series code click through to a history pop-up
 >  If you'd like to setup your own version see **[SETUP.md](SETUP.md)**
