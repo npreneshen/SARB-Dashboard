@@ -11,6 +11,11 @@ built on the same pattern: one HTML file, one PowerShell updater, one data sidec
 
 **[Click here to try the SA CPI Dashboard →](http://sacpi.metiscore.space/)** **http://sacpi.metiscore.space/** 
 
+> **⚠️ The hosted versions (sacpi.metiscore.space) is not tied to this repo.** It's deployed straight
+> from a working folder via `wrangler pages deploy`, independently of `git`/GitHub — deploying
+> does not commit anything, and committing/pushing does not redeploy the site. The two can and
+> do drift out of sync.
+
 > Every chart has a table view, CSV and PNG export. Tables export to CSV and rows with a series code click through to a history pop-up
 >  If you'd like to setup your own version see **[SETUP.md](SETUP.md)**
 > Note: Intial load might take a few minutes if you've cloned the repo and are running it locally. Refresh the page once the powershell closes.
