@@ -11,7 +11,7 @@ built on the same pattern: one HTML file, one PowerShell updater, one data sidec
 
 **[Click here to try the SA CPI Dashboard →](http://sacpi.metiscore.space/)** **http://sacpi.metiscore.space/** 
 
-> **⚠️ The hosted versions (sacpi.metiscore.space) is not tied to this repo.** It's deployed straight
+> **⚠️ The hosted versions (sarb.metiscore.space) is not tied to this repo.** It's deployed straight
 > from a working folder via `wrangler pages deploy`, independently of `git`/GitHub — deploying
 > does not commit anything, and committing/pushing does not redeploy the site. The two can and
 > do drift out of sync.
